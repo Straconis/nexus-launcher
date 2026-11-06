@@ -13,6 +13,7 @@ jobs:
         with:
           toolchain: 1.99.1
           components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
       - name: Linux UI libraries
         run: |
           sudo apt-get update
@@ -29,14 +30,35 @@ jobs:
   windows:
     name: windows
     runs-on: windows-latest
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.99.1
           components: clippy
+      - uses: Swatinem/rust-cache@v2
       - name: Clippy, test, and build
         run: |
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
           cargo build --workspace --release
+      - name: Install verified Inno Setup compiler
+        shell: pwsh
+        run: ./scripts/install-inno-setup.ps1
+      - name: Package portable ZIP and installer
+        shell: pwsh
+        run: ./scripts/package-windows.ps1
+      - name: Test Windows installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist/nexus-launcher-setup-*-windows-x86_64.exe | Select-Object -First 1
+          ./scripts/test-windows-installer.ps1 -Installer $installer.FullName
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexus-launcher-windows-packages
+          path: |
+            dist/nexus-launcher-windows-x86_64.zip
+            dist/nexus-launcher-setup-*-windows-x86_64.exe
+          if-no-files-found: error

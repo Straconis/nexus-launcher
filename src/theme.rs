@@ -6,6 +6,7 @@ use eframe::egui::{self, Color32, FontFamily, Stroke, Vec2};
 
 pub const ACCENT: Color32 = Color32::from_rgb(0xff, 0x24, 0x4e);
 pub const ACCENT_DEEP: Color32 = Color32::from_rgb(0xc4, 0x12, 0x36);
+pub const CHROME: Color32 = Color32::from_rgb(0x18, 0x19, 0x20);
 pub const BG: Color32 = Color32::from_rgb(0x07, 0x08, 0x0b);
 pub const PANEL: Color32 = Color32::from_rgb(0x10, 0x11, 0x18);
 pub const TEXT: Color32 = Color32::from_rgb(0xf5, 0xf5, 0xfa);

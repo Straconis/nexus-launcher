@@ -35,8 +35,8 @@ jobs:
 
       - name: Test and build
         run: |
-          cargo test --release
-          cargo build --release
+          cargo test --workspace --release --locked
+          cargo build --release -p nexus-launcher --locked
 
       - name: Package tar.gz
         run: ./scripts/package-linux.sh
@@ -70,28 +70,24 @@ jobs:
 
       - name: Test and build
         run: |
-          cargo test --release
-          cargo build --release
+          cargo test --workspace --release --locked
+          cargo build --release -p nexus-launcher --locked
         env:
           # Portable zip: do not require the Visual C++ redistributable.
           RUSTFLAGS: -C target-feature=+crt-static
 
-      - name: Package zip
+      - name: Install verified Inno Setup compiler
+        shell: pwsh
+        run: ./scripts/install-inno-setup.ps1
+      - name: Package portable ZIP and installer
+        shell: pwsh
+        run: ./scripts/package-windows.ps1
+
+      - name: Test installer and Start Menu entry
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          $name = "nexus-launcher-windows-x86_64"
-          $stage = Join-Path "dist" $name
-          New-Item -ItemType Directory -Force -Path (Join-Path $stage "catalog") | Out-Null
-          Copy-Item "target/release/nexus-launcher.exe" (Join-Path $stage "nexus-launcher.exe")
-          Copy-Item "catalog/apps.toml" (Join-Path $stage "catalog/apps.toml")
-          Copy-Item "README.md","LICENSE-MIT","LICENSE-APACHE","packaging/PORTABLE.txt" $stage
-          Copy-Item "assets/fonts/OFL.txt" (Join-Path $stage "OFL-Orbitron.txt")
-          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
-          if (Test-Path "dist/$name.zip") { Remove-Item "dist/$name.zip" }
-          tar -a -c -f "dist/$name.zip" -C dist $name
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Get-Item "dist/$name.zip" | Format-List FullName, Length
+          $installer = Get-ChildItem dist/nexus-launcher-setup-*-windows-x86_64.exe | Select-Object -First 1
+          ./scripts/test-windows-installer.ps1 -Installer $installer.FullName
 
       - name: Smoke test packaged binary
         shell: pwsh
@@ -109,8 +105,10 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: nexus-launcher-windows-x86_64.zip
-          path: dist/nexus-launcher-windows-x86_64.zip
+          name: nexus-launcher-windows-packages
+          path: |
+            dist/nexus-launcher-windows-x86_64.zip
+            dist/nexus-launcher-setup-*-windows-x86_64.exe
           if-no-files-found: error
 
   publish:
@@ -129,7 +127,7 @@ jobs:
         run: |
           cd artifacts
           ls -l
-          sha256sum nexus-launcher-linux-x86_64.tar.gz nexus-launcher-windows-x86_64.zip | tee SHA256SUMS.txt
+          sha256sum nexus-launcher-linux-x86_64.tar.gz nexus-launcher-windows-x86_64.zip nexus-launcher-setup-*-windows-x86_64.exe | tee SHA256SUMS.txt
 
       - name: Release notes
         run: |
@@ -162,6 +160,7 @@ jobs:
           files=(
             artifacts/nexus-launcher-linux-x86_64.tar.gz
             artifacts/nexus-launcher-windows-x86_64.zip
+            artifacts/nexus-launcher-setup-*-windows-x86_64.exe
             artifacts/SHA256SUMS.txt
           )
           if gh release view "$tag" >/dev/null 2>&1; then

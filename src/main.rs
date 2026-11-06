@@ -1,6 +1,7 @@
 //! Nexus Launcher binary. `--check` parses the catalog and skips the window.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(all(windows, feature = "gui"), windows_subsystem = "windows")]
 
 fn main() {
     let code =

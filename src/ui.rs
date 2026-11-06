@@ -20,8 +20,20 @@ use nexus_protocol::{CatalogApp, ReleaseMeta, Visibility};
 mod central_panel;
 
 pub fn run(catalog_path: PathBuf) -> eframe::Result {
+    let icon = image::load_from_memory(include_bytes!(
+        "../assets/branding/straconis-nexus-launcher.png"
+    ))
+    .expect("bundled launcher icon must decode")
+    .thumbnail(256, 256)
+    .into_rgba8();
+    let icon = egui::IconData {
+        width: icon.width(),
+        height: icon.height(),
+        rgba: icon.into_raw(),
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_icon(icon)
             .with_inner_size([1120.0, 760.0])
             .with_min_inner_size([780.0, 540.0]),
         ..Default::default()
@@ -39,6 +51,7 @@ pub fn run(catalog_path: PathBuf) -> eframe::Result {
 struct NexusApp {
     catalog_path: PathBuf,
     show_supported: bool,
+    contrast_frame: bool,
     cards: Vec<Card>,
     catalog_error: Option<String>,
     rate: Option<RateSnapshot>,
@@ -281,6 +294,7 @@ impl NexusApp {
         let mut app = Self {
             catalog_path,
             show_supported: false,
+            contrast_frame: true,
             cards: Vec::new(),
             catalog_error: None,
             rate: None,
@@ -692,10 +706,37 @@ impl eframe::App for NexusApp {
         self.poll();
         let modal_open = self.confirm.is_some() || self.dialog_error.is_some();
         let mut actions = Vec::new();
+        let chrome = if self.contrast_frame {
+            theme::CHROME
+        } else {
+            BG
+        };
+        egui::TopBottomPanel::top("launcher-header")
+            .frame(
+                Frame::new()
+                    .fill(chrome)
+                    .inner_margin(egui::Margin::symmetric(20, 12)),
+            )
+            .show(ctx, |ui| {
+                ui.add_enabled_ui(!modal_open, |ui| {
+                    actions.extend(self.header(ui));
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(!self.show_supported, "TOOLS").clicked() {
+                            actions.push(UiAction::ShowPage(false));
+                        }
+                        if ui
+                            .selectable_label(self.show_supported, "SUPPORTED PROJECTS")
+                            .clicked()
+                        {
+                            actions.push(UiAction::ShowPage(true));
+                        }
+                    });
+                });
+            });
         egui::TopBottomPanel::bottom("status-bar")
             .frame(
                 Frame::new()
-                    .fill(BG)
+                    .fill(chrome)
                     .inner_margin(egui::Margin::symmetric(20, 10)),
             )
             .show(ctx, |ui| self.footer(ui));
@@ -713,19 +754,6 @@ impl eframe::App for NexusApp {
                     }
                 }
                 ui.add_enabled_ui(!modal_open, |ui| {
-                    actions.extend(self.header(ui));
-                    ui.horizontal(|ui| {
-                        if ui.selectable_label(!self.show_supported, "TOOLS").clicked() {
-                            actions.push(UiAction::ShowPage(false));
-                        }
-                        if ui
-                            .selectable_label(self.show_supported, "SUPPORTED PROJECTS")
-                            .clicked()
-                        {
-                            actions.push(UiAction::ShowPage(true));
-                        }
-                    });
-                    ui.add_space(8.0);
                     actions.extend(self.central_actions(ui));
                     actions.extend(self.banners(ui));
                     actions.extend(self.grid(ui));
@@ -1609,7 +1637,7 @@ impl NexusApp {
         };
     }
 
-    fn footer(&self, ui: &mut egui::Ui) {
+    fn footer(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             brand_link(
                 ui,
@@ -1626,6 +1654,9 @@ impl NexusApp {
                 Vec2::splat(58.0),
                 "https://s3dlabs.com",
             );
+            ui.add_space(16.0);
+            ui.checkbox(&mut self.contrast_frame, "Charcoal frame")
+                .on_hover_text("Compare charcoal header/footer with the original dark frame.");
         });
         ui.add_space(4.0);
         let root = match &self.data_root {
@@ -2210,6 +2241,7 @@ mod tests {
         NexusApp {
             catalog_path: PathBuf::from("catalog/apps.toml"),
             show_supported: false,
+            contrast_frame: true,
             cards: Vec::new(),
             catalog_error: None,
             rate: None,
