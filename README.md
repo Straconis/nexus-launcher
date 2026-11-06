@@ -45,7 +45,7 @@ The shape of the app — a local catalog of desktop tools, installs driven by pu
 
 ## Design
 
-The header uses a dedicated Straconis Nexus Launcher graphic. Footer brand links open `https://straconis.dev` from the standard Software wordmark and `https://s3dlabs.com` from the S3D Labs logo supplied from `Discord Server Logo.png`. Hovering the Software wordmark also shows the full developer logo. Images in `assets/branding/` are embedded in the binary so portable builds need no external image files. The current palette remains provisional. Header and button labels use [Orbitron](https://github.com/theleagueof/orbitron) (SIL Open Font License, reserved font name "Orbitron"). The file in `assets/fonts/` is the unmodified variable font, with `assets/fonts/OFL.txt`. Body copy stays on egui's default UI font so descriptions stay readable. Calls to action are uppercase.
+The header pairs a dedicated Straconis Nexus Launcher graphic on the left with the Straconis Dev / Project Nexus logo on the right. Footer brand links open `https://straconis.dev` from the standard Software wordmark and `https://s3dlabs.com` from the S3D Labs logo supplied from `Discord Server Logo.png`. Hovering the Software wordmark also shows the full developer logo. Images in `assets/branding/` are embedded in the binary so portable builds need no external image files. The current palette remains provisional. Header and button labels use [Orbitron](https://github.com/theleagueof/orbitron) (SIL Open Font License, reserved font name "Orbitron"). The file in `assets/fonts/` is the unmodified variable font, with `assets/fonts/OFL.txt`. Body copy stays on egui's default UI font so descriptions stay readable. Calls to action are uppercase.
 
 | Token | Hex | Use |
 | --- | --- | --- |

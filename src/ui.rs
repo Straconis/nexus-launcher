@@ -548,21 +548,36 @@ impl NexusApp {
                 );
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let enabled = !self.working();
-                if cta(
-                    ui,
-                    "REFRESH",
-                    if enabled {
-                        CtaKind::Primary
-                    } else {
-                        CtaKind::Disabled
-                    },
-                    148.0,
-                )
-                .clicked()
-                {
-                    actions.push(UiAction::Refresh);
-                }
+                ui.vertical_centered(|ui| {
+                    ui.set_width(148.0);
+                    let project_logo = branding_texture(
+                        ui.ctx(),
+                        "straconis-dev-project-nexus",
+                        include_bytes!("../assets/branding/straconis-dev-project-nexus-logo.png"),
+                    );
+                    ui.add(egui::Image::from_texture(&project_logo).max_size(Vec2::splat(128.0)))
+                        .on_hover_ui(|ui| {
+                            ui.add(
+                                egui::Image::from_texture(&project_logo)
+                                    .max_size(Vec2::splat(340.0)),
+                            );
+                        });
+                    let enabled = !self.working();
+                    if cta(
+                        ui,
+                        "REFRESH",
+                        if enabled {
+                            CtaKind::Primary
+                        } else {
+                            CtaKind::Disabled
+                        },
+                        148.0,
+                    )
+                    .clicked()
+                    {
+                        actions.push(UiAction::Refresh);
+                    }
+                });
             });
         });
         ui.add_space(8.0);
