@@ -1,0 +1,35 @@
+# Nexus Launcher catalog.
+# Add another [[app]] table and press REFRESH in the window.
+# `repo` is owner/name on GitHub. With no published release, the card stays Coming soon.
+
+[[app]]
+id = "stat-tracker"
+name = "Stat Tracker"
+summary = "Session and project statistics for the Straconis desktop suite."
+repo = "Straconis/stat-tracker"
+category = "insights"
+homepage = "https://github.com/Straconis/stat-tracker"
+
+[[app]]
+id = "snipscratch"
+name = "SnipScratch"
+summary = "A local scratchpad for snippets, clippings, and rough cuts."
+repo = "Straconis/snipscratch"
+category = "notes"
+homepage = "https://github.com/Straconis/snipscratch"
+
+[[app]]
+id = "snaplapse"
+name = "SnapLapse"
+summary = "Capture stills over time and play them back as a lapse."
+repo = "Straconis/snaplapse"
+category = "capture"
+homepage = "https://github.com/Straconis/snaplapse"
+
+[[app]]
+id = "frameweaver"
+name = "FrameWeaver"
+summary = "Arrange frames into a sequence you can preview and export."
+repo = "Straconis/frameweaver"
+category = "video"
+homepage = "https://github.com/Straconis/frameweaver"
