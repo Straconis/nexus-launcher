@@ -309,6 +309,14 @@ mod tests {
             ids,
             ["stat-tracker", "snipscratch", "snaplapse", "frameweaver"]
         );
+        assert_eq!(
+            catalog.apps[0].repo.as_deref(),
+            Some("Straconis/stat_tracker")
+        );
+        assert_eq!(
+            catalog.apps[0].homepage.as_deref(),
+            Some("https://github.com/Straconis/stat_tracker")
+        );
         assert!(catalog.apps.iter().all(|app| app.repo.is_some()));
         assert!(catalog.apps.iter().all(|app| !app.summary.is_empty()));
     }

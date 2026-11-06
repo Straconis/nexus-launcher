@@ -6,9 +6,9 @@
 id = "stat-tracker"
 name = "Stat Tracker"
 summary = "Session and project statistics for the Straconis desktop suite."
-repo = "Straconis/stat-tracker"
+repo = "Straconis/stat_tracker"
 category = "insights"
-homepage = "https://github.com/Straconis/stat-tracker"
+homepage = "https://github.com/Straconis/stat_tracker"
 
 [[app]]
 id = "snipscratch"

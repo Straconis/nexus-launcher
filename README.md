@@ -77,9 +77,9 @@ The header pairs a dedicated Straconis Nexus Launcher graphic on the left with t
 id = "stat-tracker"
 name = "Stat Tracker"
 summary = "Session and project statistics for the Straconis desktop suite."
-repo = "Straconis/stat-tracker"
+repo = "Straconis/stat_tracker"
 category = "insights"
-homepage = "https://github.com/Straconis/stat-tracker"
+homepage = "https://github.com/Straconis/stat_tracker"
 # asset_preference = [".AppImage", ".tar.gz"]
 # executable = "stat-tracker"
 # platforms = ["linux", "windows", "macos"]
