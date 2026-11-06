@@ -2159,6 +2159,7 @@ dependencies = [
  "eframe",
  "flate2",
  "hex",
+ "image",
  "open",
  "reqwest",
  "semver",

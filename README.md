@@ -45,7 +45,7 @@ The shape of the app — a local catalog of desktop tools, installs driven by pu
 
 ## Design
 
-The current window uses a provisional Straconis palette and text header; final brand assets and app icons are still pending. Header and button labels use [Orbitron](https://github.com/theleagueof/orbitron) (SIL Open Font License, reserved font name "Orbitron"). The file in `assets/fonts/` is the unmodified variable font, with `assets/fonts/OFL.txt`. Body copy stays on egui's default UI font so descriptions stay readable. Calls to action are uppercase.
+The header uses the Straconis developer logo and standard Software wordmark from `assets/branding/`, embedded in the binary so portable builds need no external image files. The current palette remains provisional. Header and button labels use [Orbitron](https://github.com/theleagueof/orbitron) (SIL Open Font License, reserved font name "Orbitron"). The file in `assets/fonts/` is the unmodified variable font, with `assets/fonts/OFL.txt`. Body copy stays on egui's default UI font so descriptions stay readable. Calls to action are uppercase.
 
 | Token | Hex | Use |
 | --- | --- | --- |

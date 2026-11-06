@@ -518,18 +518,30 @@ impl NexusApp {
     fn header(&self, ui: &mut egui::Ui) -> Vec<UiAction> {
         let mut actions = Vec::new();
         ui.horizontal(|ui| {
+            let logo = branding_texture(
+                ui.ctx(),
+                "straconis-dev-logo",
+                include_bytes!("../assets/branding/straconis-dev-logo.png"),
+            );
+            ui.add(egui::Image::from_texture(&logo).fit_to_exact_size(Vec2::splat(120.0)))
+                .on_hover_ui(|ui| {
+                    ui.add(egui::Image::from_texture(&logo).fit_to_exact_size(Vec2::splat(300.0)));
+                });
+            ui.add_space(8.0);
             ui.vertical(|ui| {
+                let wordmark = branding_texture(
+                    ui.ctx(),
+                    "straconis-software-wordmark",
+                    include_bytes!("../assets/branding/straconis-software-wordmark.png"),
+                );
+                ui.add(
+                    egui::Image::from_texture(&wordmark).fit_to_exact_size(Vec2::new(240.0, 75.0)),
+                );
                 ui.label(
                     RichText::new("NEXUS LAUNCHER")
                         .family(theme::orbitron())
-                        .size(34.0)
+                        .size(24.0)
                         .color(TEXT),
-                );
-                ui.label(
-                    RichText::new("STRACONIS DESKTOP TOOLS")
-                        .family(theme::orbitron())
-                        .size(12.0)
-                        .color(MUTED),
                 );
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -888,6 +900,25 @@ impl NexusApp {
         }
         actions
     }
+}
+
+// Cache decoded embedded assets in the egui context; portable builds need no external files.
+fn branding_texture(ctx: &egui::Context, name: &'static str, bytes: &[u8]) -> egui::TextureHandle {
+    let id = egui::Id::new(name);
+    if let Some(texture) = ctx.data_mut(|data| data.get_temp::<egui::TextureHandle>(id)) {
+        return texture;
+    }
+    let decoded = image::load_from_memory(bytes)
+        .expect("bundled branding PNG must decode")
+        .into_rgba8();
+    let size = [decoded.width() as usize, decoded.height() as usize];
+    let texture = ctx.load_texture(
+        name,
+        egui::ColorImage::from_rgba_unmultiplied(size, decoded.as_raw()),
+        egui::TextureOptions::LINEAR,
+    );
+    ctx.data_mut(|data| data.insert_temp(id, texture.clone()));
+    texture
 }
 
 fn notice(ui: &mut egui::Ui, text: &str, accent: bool) {
