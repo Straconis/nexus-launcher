@@ -8,12 +8,16 @@ Steve can run one Nexus Launcher, sign in as an admin, and open **MANAGE** for a
 
 - add desktop apps to a shared catalog, one at a time
 - edit existing entries without changing their published state
-- publish or unpublish them
+- show or hide them using **SHOW IN LAUNCHER** / **HIDE FROM LAUNCHER**
 - grant or revoke a GitHub user on a single app
 
 Other people sign in with GitHub. The broker returns only the apps they may see. A private build is downloaded through the broker. The person does not need access to the private source repository.
 
 The local file `catalog/apps.toml` still works with no broker configured. When a broker is configured, its catalog is authoritative: local seed rows do not override central edits, and unpublishing removes the card on the next catalog refresh. Anonymous users receive the published public catalog. Nothing scans a GitHub org or imports website repositories or WordPress plugins. If an app is not an explicit catalog row, it is not a desktop app.
+
+## Launcher help and listing controls
+
+**MANAGE** opens the listings first. Each row says **SHOWN IN LAUNCHER** or **HIDDEN FROM LAUNCHER**. Show/hide controls affect the shared catalog, independently of public or restricted access. New apps start hidden; save their details, then choose **SHOW IN LAUNCHER**. **ADD APP** and **EDIT** open the details form; **USER ACCESS** opens grants. **HELP / HOW TO USE** opens searchable help from the main window, and **HELP WITH LISTINGS** opens it from administration.
 
 ## Module map
 

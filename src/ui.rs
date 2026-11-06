@@ -1631,7 +1631,11 @@ fn central_job(job: CentralJob, events: &Sender<Event>) {
             published,
         } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
             client.set_published(&id, published)?;
-            Ok("Updated publishing.".into())
+            Ok(format!(
+                "{} is now {} in the launcher.",
+                id,
+                if published { "shown" } else { "hidden" }
+            ))
         })),
         CentralJob::DeleteApp {
             server_url,
