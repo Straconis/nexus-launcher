@@ -19,6 +19,14 @@ The local file `catalog/apps.toml` still works with no broker configured. When a
 
 **MANAGE** opens the listings first. Each row says **SHOWN IN LAUNCHER** or **HIDDEN FROM LAUNCHER**. Show/hide controls affect the shared catalog, independently of public or restricted access. New apps start hidden; save their details, then choose **SHOW IN LAUNCHER**. **ADD APP** and **EDIT** open the details form; **USER ACCESS** opens grants. **HELP / HOW TO USE** opens searchable help from the main window, and **HELP WITH LISTINGS** opens it from administration.
 
+## Categories, GitHub import, and summaries
+
+App details use a category dropdown. **MANAGE CATEGORIES** stores shared categories in the broker database. Add, rename, or remove a category there; rename updates assigned entries and removal clears their category without hiding the apps.
+
+Paste a GitHub link in App details to populate the canonical `owner/repo`, homepage, slug ID, and display name. New `stat_tracker` repositories become `stat-tracker` IDs and “Stat Tracker” display names. Existing IDs and custom display names are preserved when editing. The repository URL can include `.git`, query parameters, fragments, or a subpage path.
+
+**DRAFT SUMMARY FROM GITHUB** fetches the description and README introduction through an admin-only broker endpoint. Review the suggestion or choose the README introduction, edit the multiline summary, then save separately. These are source-assisted drafts, not AI rewrites. A server release token is required for private repository sources. The token stays on the broker.
+
 ## Module map
 
 | Piece | Role |

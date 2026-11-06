@@ -37,6 +37,14 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/catalog", get(catalog))
         .route("/v1/apps/{id}/release", get(release))
         .route("/v1/apps/{id}/download", get(download))
+        .route(
+            "/v1/admin/categories",
+            get(crate::admin_tools::categories).post(crate::admin_tools::change_category),
+        )
+        .route(
+            "/v1/admin/repo-preview",
+            post(crate::admin_tools::repo_preview),
+        )
         .route("/v1/admin/apps", get(admin_list).post(admin_upsert))
         .route("/v1/admin/apps/{id}", axum::routing::delete(admin_delete))
         .route("/v1/admin/apps/{id}/published", post(admin_publish))
@@ -293,7 +301,7 @@ async fn admin_revoke(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<Caller, ApiFailure> {
+pub(crate) fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<Caller, ApiFailure> {
     let caller = auth::authenticate(&state.db, &state.config, headers)?;
     if !caller.admin {
         return Err(ApiFailure::forbidden());

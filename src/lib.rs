@@ -10,6 +10,7 @@ pub mod cli;
 pub mod github;
 pub mod install;
 pub mod model;
+pub mod repo_input;
 
 #[cfg(feature = "gui")]
 mod theme;

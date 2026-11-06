@@ -14,6 +14,8 @@ pub enum CentralAction {
     SignOut,
     RefreshAdmin,
     SaveApp,
+    ChangeCategory(nexus_protocol::CategoryChange),
+    RepoPreview(String),
     TogglePublished { id: String, published: bool },
     DeleteApp { id: String },
     Grant { id: String, login: String },
@@ -37,6 +39,13 @@ pub struct CentralPanel {
     editor_open: bool,
     pub admin_apps: Vec<AdminApp>,
     pub grants: Vec<Grant>,
+    pub categories: Vec<String>,
+    pub summary_preview: Option<nexus_protocol::RepoPreview>,
+    category_open: bool,
+    category_selected: String,
+    category_name: String,
+    repo_input: String,
+    editing_existing: bool,
     pub draft_id: String,
     pub draft_name: String,
     pub draft_summary: String,
@@ -67,6 +76,13 @@ impl CentralPanel {
             editor_open: false,
             admin_apps: Vec::new(),
             grants: Vec::new(),
+            categories: Vec::new(),
+            summary_preview: None,
+            category_open: false,
+            category_selected: String::new(),
+            category_name: String::new(),
+            repo_input: String::new(),
+            editing_existing: false,
             draft_id: String::new(),
             draft_name: String::new(),
             draft_summary: String::new(),
@@ -134,7 +150,9 @@ impl CentralPanel {
         if self.admin_open {
             let mut open = self.admin_open;
             egui::Window::new("MANAGE APPS")
-                .id(egui::Id::new("central-admin-window"))
+                .id(egui::Id::new("central-admin-window-v2"))
+                .collapsible(false)
+                .default_pos([180.0, 140.0])
                 .open(&mut open)
                 .default_size([680.0, 460.0])
                 .resizable(true)
@@ -147,6 +165,35 @@ impl CentralPanel {
                     actions.extend(self.admin(ui));
                 });
             self.admin_open = open;
+        }
+        if self.category_open {
+            let mut open = self.category_open;
+            egui::Window::new("MANAGE CATEGORIES").open(&mut open).default_width(430.0).vscroll(true).show(ui.ctx(), |ui| {
+                ui.label("Shared by every admin on this server. Renaming updates assigned apps; removing clears their category.");
+                for name in self.categories.clone() {
+                    if ui.selectable_label(self.category_selected == name, &name).clicked() {
+                        self.category_selected = name.clone(); self.category_name = name;
+                    }
+                }
+                ui.separator();
+                ui.add(egui::TextEdit::singleline(&mut self.category_name).hint_text("Category name"));
+                ui.horizontal_wrapped(|ui| {
+                    if ui.add_enabled(!self.category_name.trim().is_empty(), egui::Button::new("ADD CATEGORY")).clicked() {
+                        actions.push(CentralAction::ChangeCategory(nexus_protocol::CategoryChange { name: String::new(), replacement: Some(self.category_name.trim().into()) }));
+                    }
+                    if ui.add_enabled(!self.category_selected.is_empty() && !self.category_name.trim().is_empty(), egui::Button::new("RENAME SELECTED")).clicked() {
+                        if self.draft_category == self.category_selected { self.draft_category = self.category_name.trim().into(); }
+                        actions.push(CentralAction::ChangeCategory(nexus_protocol::CategoryChange { name: self.category_selected.clone(), replacement: Some(self.category_name.trim().into()) }));
+                        self.category_selected = self.category_name.trim().into();
+                    }
+                    if ui.add_enabled(!self.category_selected.is_empty(), egui::Button::new("REMOVE SELECTED")).clicked() {
+                        actions.push(CentralAction::ChangeCategory(nexus_protocol::CategoryChange { name: self.category_selected.clone(), replacement: None }));
+                        self.category_selected.clear();
+                    }
+                });
+                if let Some(message) = &self.message { ui.label(message); }
+            });
+            self.category_open = open;
         }
         if self.help_open {
             let mut open = self.help_open;
@@ -218,6 +265,24 @@ impl CentralPanel {
         actions
     }
 
+    fn import_repo(&mut self) {
+        match crate::repo_input::parse(&self.repo_input) {
+            Ok(fields) => {
+                self.draft_repo = fields.repo;
+                self.draft_homepage = fields.homepage;
+                if !self.editing_existing {
+                    self.draft_id = fields.id;
+                    self.draft_name = fields.name;
+                }
+                self.summary_preview = None;
+                self.message = Some(
+                    "GitHub link imported. Review the fields, then draft a summary or save.".into(),
+                );
+            }
+            Err(message) => self.message = Some(message),
+        }
+    }
+
     fn admin(&mut self, ui: &mut egui::Ui) -> Vec<CentralAction> {
         let mut actions = Vec::new();
         let mut show_editor = false;
@@ -235,6 +300,12 @@ impl CentralPanel {
                 self.draft_category.clear();
                 self.draft_homepage.clear();
                 self.draft_private = false;
+                self.editing_existing = false;
+                self.repo_input.clear();
+                self.summary_preview = None;
+            }
+            if ui.button("MANAGE CATEGORIES").clicked() {
+                self.category_open = true;
             }
             if ui.button("RELOAD LIST").clicked() {
                 actions.push(CentralAction::RefreshAdmin);
@@ -262,6 +333,9 @@ impl CentralPanel {
                 );
                 ui.horizontal_wrapped(|ui| {
                     if cta(ui, "EDIT", CtaKind::Secondary, 80.0).clicked() {
+                        self.editing_existing = true;
+                        self.summary_preview = None;
+                        self.repo_input = app.repo.clone().unwrap_or_default();
                         self.draft_id = app.id.clone();
                         self.draft_name = app.name.clone();
                         self.draft_summary = app.summary.clone();
@@ -308,9 +382,22 @@ impl CentralPanel {
             if show_editor {
                 heading.scroll_to_me(Some(egui::Align::TOP));
             }
+            ui.label(
+                "Paste a GitHub link to fill the repository, app ID, display name, and homepage.",
+            );
+            let pasted = ui.add(
+                egui::TextEdit::singleline(&mut self.repo_input)
+                    .hint_text("https://github.com/owner/repository"),
+            );
+            if pasted.changed() && self.repo_input.trim().starts_with("http") {
+                self.import_repo();
+            }
+            if ui.button("USE GITHUB LINK / OWNER/REPO").clicked() {
+                self.import_repo();
+            }
             ui.horizontal(|ui| {
                 ui.label(RichText::new("App ID").color(MUTED));
-                ui.add(egui::TextEdit::singleline(&mut self.draft_id).desired_width(140.0));
+                ui.add_enabled(!self.editing_existing, egui::TextEdit::singleline(&mut self.draft_id).desired_width(140.0)).on_hover_text("App IDs identify installed copies. Existing IDs are kept when importing a different repository.");
                 ui.label(RichText::new("Display name").color(MUTED));
                 ui.add(egui::TextEdit::singleline(&mut self.draft_name).desired_width(160.0));
             });
@@ -319,10 +406,76 @@ impl CentralPanel {
             ui.add(egui::TextEdit::singleline(&mut self.draft_repo).desired_width(220.0));
             ui.checkbox(&mut self.draft_private, "Restricted to granted users").on_hover_text("Unchecked: public access. This does not change the repository privacy on GitHub.");
         });
-            ui.add(egui::TextEdit::singleline(&mut self.draft_summary).hint_text("summary"));
+            ui.label("Summary — explain what it does and why someone would use it.");
+            ui.add(
+                egui::TextEdit::multiline(&mut self.draft_summary)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("What can someone accomplish with this app?"),
+            );
+            if ui.button("DRAFT SUMMARY FROM GITHUB").on_hover_text("Loads the repository description and README on your server. Drafts are source-based, not AI-generated; nothing is saved automatically.").clicked() {
+                match crate::repo_input::parse(&self.draft_repo) {
+                    Ok(fields) => { self.draft_repo = fields.repo.clone(); actions.push(CentralAction::RepoPreview(fields.repo)); }
+                    Err(message) => self.message = Some(message),
+                }
+            }
+            if let Some(preview) = self.summary_preview.clone() {
+                ui.group(|ui| {
+                    ui.label("Suggested summary (review before using)");
+                    if preview.summary.is_empty() {
+                        ui.label("No useful description or README introduction found. Write the summary above manually.");
+                    } else { ui.label(&preview.summary); }
+                    if !preview.summary.is_empty() && ui.button("USE SUGGESTED SUMMARY").clicked() {
+                        self.draft_summary = preview.summary.clone();
+                    }
+                    egui::CollapsingHeader::new(
+                        "Source: GitHub description and README introduction",
+                    )
+                    .show(ui, |ui| {
+                        ui.label(&preview.description);
+                        ui.label(&preview.readme_excerpt);
+                        if !preview.readme_excerpt.is_empty()
+                            && ui.button("USE README INTRODUCTION").clicked()
+                        {
+                            self.draft_summary = preview.readme_excerpt;
+                        }
+                    });
+                    ui.label("Edit the wording above, then SAVE APP DETAILS when ready.");
+                });
+            }
             ui.horizontal(|ui| {
                 ui.label(RichText::new("category").color(MUTED));
-                ui.add(egui::TextEdit::singleline(&mut self.draft_category).desired_width(120.0));
+                egui::ComboBox::from_id_salt("app-category")
+                    .selected_text(if self.draft_category.is_empty() {
+                        "Uncategorized"
+                    } else {
+                        &self.draft_category
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.draft_category,
+                            String::new(),
+                            "Uncategorized",
+                        );
+                        let mut categories = self.categories.clone();
+                        if !self.draft_category.is_empty()
+                            && !categories.contains(&self.draft_category)
+                        {
+                            categories.push(self.draft_category.clone());
+                        }
+                        for category in categories {
+                            ui.selectable_value(
+                                &mut self.draft_category,
+                                category.clone(),
+                                &category,
+                            );
+                        }
+                    });
+                if ui.button("EDIT CATEGORIES").clicked() {
+                    self.category_open = true;
+                }
+            });
+            ui.horizontal(|ui| {
                 ui.label(RichText::new("homepage").color(MUTED));
                 ui.add(
                     egui::TextEdit::singleline(&mut self.draft_homepage)
@@ -377,6 +530,9 @@ impl CentralPanel {
 }
 
 const HELP_TOPICS: &[(&str, &str)] = &[
+    ("Categories", "Pick a category from the App details dropdown. MANAGE CATEGORIES lets admins add, rename, and remove shared categories. Rename updates assigned apps; removal makes them uncategorized. Categories do not change access or listing."),
+    ("Import a GitHub link", "ADD APP, then paste a github.com repository link. Query strings, fragments, .git suffixes, and subpage paths are trimmed. The repository spelling is preserved; underscores become hyphens in the separate app ID. Existing app IDs stay unchanged when editing."),
+    ("Draft better summaries", "DRAFT SUMMARY FROM GITHUB loads the description and introductory README text. Review the source-based suggestion and choose USE SUGGESTED SUMMARY, or use the README introduction. These are not AI rewrites. Edit the summary to say what the app does and why someone would use it; saving is a separate step. Private repositories need server access."),
     ("Show or hide an app", "Open MANAGE. Each entry says SHOWN IN LAUNCHER or HIDDEN FROM LAUNCHER. Choose SHOW IN LAUNCHER to list it, or HIDE FROM LAUNCHER to remove it from the shared catalog. Changes apply to everyone using this server. Installed copies stay on disk."),
     ("Public access versus listing", "Public means anyone can see a listed app. Restricted means only granted GitHub users and admins can see it. An app must also be shown in the launcher: public does not automatically mean listed. These settings do not change the repository's privacy on GitHub."),
     ("Add or edit a repository", "In MANAGE, choose ADD APP or EDIT. Use owner/repository for GitHub repo, for example Straconis/stat_tracker. App ID is a separate lowercase slug such as stat-tracker. SAVE APP DETAILS saves metadata; new apps start hidden until you choose SHOW IN LAUNCHER."),
@@ -389,6 +545,24 @@ const HELP_TOPICS: &[(&str, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn importing_a_link_fills_new_apps_but_preserves_existing_identity() {
+        let mut panel = CentralPanel::new(None);
+        panel.repo_input = "https://github.com/Straconis/stat_tracker?tab=readme#intro".into();
+        panel.import_repo();
+        assert_eq!(panel.draft_repo, "Straconis/stat_tracker");
+        assert_eq!(panel.draft_id, "stat-tracker");
+        assert_eq!(panel.draft_name, "Stat Tracker");
+        panel.editing_existing = true;
+        panel.draft_id = "installed-id".into();
+        panel.draft_name = "My custom name".into();
+        panel.repo_input = "Straconis/other-tool".into();
+        panel.import_repo();
+        assert_eq!(panel.draft_id, "installed-id");
+        assert_eq!(panel.draft_name, "My custom name");
+        assert_eq!(panel.draft_repo, "Straconis/other-tool");
+    }
 
     #[test]
     fn show_and_hide_buttons_request_the_opposite_listing_state() {

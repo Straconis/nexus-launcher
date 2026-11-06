@@ -156,3 +156,22 @@ pub struct Health {
     pub status: String,
     pub version: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategoryChange {
+    pub name: String,
+    pub replacement: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoPreviewRequest {
+    pub repo: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoPreview {
+    pub repo: String,
+    pub description: String,
+    pub readme_excerpt: String,
+    pub summary: String,
+}

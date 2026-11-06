@@ -539,3 +539,78 @@ fn selectors_and_urls_reject_non_github_hosts() {
         Some("abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabca")
     );
 }
+
+#[tokio::test]
+async fn category_management_requires_admin_and_updates_assigned_apps() {
+    let harness = harness();
+    let app = &harness.app;
+    for path in ["/v1/admin/categories", "/v1/admin/repo-preview"] {
+        let (status, _) = send(
+            app,
+            "POST",
+            path,
+            None,
+            Some(if path.ends_with("categories") {
+                json!({"name":"", "replacement":"Utilities"})
+            } else {
+                json!({"repo":"Straconis/tool"})
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    harness.fake.set_user(42, "octocat");
+    let (member, _) = login(app).await;
+    let (status, _) = send(app, "GET", "/v1/admin/categories", Some(&member), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    harness.fake.set_user(7, "steve");
+    let (admin, _) = login(app).await;
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/admin/categories",
+        Some(&admin),
+        Some(json!({"name":"", "replacement":"Utilities"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send(app, "POST", "/v1/admin/apps", Some(&admin), Some(json!({"id":"tool", "name":"Tool", "category":"Utilities", "repo":"Straconis/tool", "visibility":"public", "published":true}))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = send(
+        app,
+        "POST",
+        "/v1/admin/categories",
+        Some(&admin),
+        Some(json!({"name":"Utilities", "replacement":"Tools"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<Vec<String>>(&body).unwrap(),
+        vec!["Tools"]
+    );
+    let (_, body) = send(app, "GET", "/v1/admin/apps", Some(&admin), None).await;
+    let apps: Vec<AdminApp> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(apps[0].category.as_deref(), Some("Tools"));
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/admin/categories",
+        Some(&admin),
+        Some(json!({"name":"Tools", "replacement":null})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = send(app, "GET", "/v1/admin/apps", Some(&admin), None).await;
+    let apps: Vec<AdminApp> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(apps[0].category, None);
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/admin/repo-preview",
+        Some(&admin),
+        Some(json!({"repo":"https://evil.test/tool"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

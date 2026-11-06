@@ -97,6 +97,16 @@ enum Job {
 }
 
 enum CentralJob {
+    Categories {
+        server_url: String,
+        token: String,
+        change: Option<nexus_protocol::CategoryChange>,
+    },
+    RepoPreview {
+        server_url: String,
+        token: String,
+        repo: String,
+    },
     LoadSession {
         server_url: String,
     },
@@ -183,6 +193,11 @@ enum Event {
 }
 
 enum CentralEvent {
+    Categories(Result<Vec<String>, String>),
+    RepoPreview {
+        repo: String,
+        result: Result<nexus_protocol::RepoPreview, String>,
+    },
     Session(Result<Option<(String, nexus_protocol::Account, Vec<CatalogApp>)>, String>),
     DeviceStarted(Result<nexus_protocol::DeviceStart, String>),
     Polled(Result<nexus_protocol::DevicePoll, String>),
@@ -703,6 +718,7 @@ impl NexusApp {
                         .color(MUTED),
                 );
             });
+            ui.add_space((ui.available_width() - 148.0 - ui.spacing().item_spacing.x).max(0.0));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.vertical_centered(|ui| {
                     ui.set_width(148.0);
@@ -773,6 +789,7 @@ impl NexusApp {
             .show(ui, |ui| {
                 egui::Grid::new("app-grid")
                     .num_columns(cols)
+                    .max_col_width(card_w)
                     .spacing(Vec2::new(gap, gap))
                     .show(ui, |ui| {
                         for (index, card) in self.cards.iter().enumerate() {
@@ -788,43 +805,48 @@ impl NexusApp {
 
     fn card(&self, ui: &mut egui::Ui, card: &Card, width: f32) -> Vec<UiAction> {
         let mut actions = Vec::new();
-        ui.allocate_ui(Vec2::new(width, 360.0), |ui| {
-            Frame::new()
-                .fill(PANEL)
-                .stroke(Stroke::new(1.0_f32, BORDER))
-                .inner_margin(14)
-                .corner_radius(8)
-                .show(ui, |ui| {
-                    ui.set_width(width - 30.0);
-                    ui.set_min_height(328.0);
-                    if let Some(category) = &card.entry.category {
+        ui.allocate_ui_with_layout(
+            Vec2::new(width, 360.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                Frame::new()
+                    .fill(PANEL)
+                    .stroke(Stroke::new(1.0_f32, BORDER))
+                    .inner_margin(14)
+                    .corner_radius(8)
+                    .show(ui, |ui| {
+                        ui.set_width(width - 30.0);
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        ui.set_min_height(328.0);
+                        if let Some(category) = &card.entry.category {
+                            ui.label(
+                                RichText::new(category.to_uppercase())
+                                    .family(theme::orbitron())
+                                    .size(11.0)
+                                    .color(ACCENT),
+                            );
+                        }
                         ui.label(
-                            RichText::new(category.to_uppercase())
+                            RichText::new(card.entry.name.to_uppercase())
                                 .family(theme::orbitron())
-                                .size(11.0)
-                                .color(ACCENT),
+                                .size(18.0)
+                                .color(TEXT),
                         );
-                    }
-                    ui.label(
-                        RichText::new(card.entry.name.to_uppercase())
-                            .family(theme::orbitron())
-                            .size(18.0)
-                            .color(TEXT),
-                    );
-                    ui.add_space(2.0);
-                    ui.label(
-                        RichText::new(if card.entry.summary.is_empty() {
-                            " ".to_string()
-                        } else {
-                            card.entry.summary.clone()
-                        })
-                        .color(MUTED)
-                        .size(13.0),
-                    );
-                    ui.add_space(6.0);
-                    actions.extend(self.card_body(ui, card));
-                });
-        });
+                        ui.add_space(2.0);
+                        ui.label(
+                            RichText::new(if card.entry.summary.is_empty() {
+                                " ".to_string()
+                            } else {
+                                card.entry.summary.clone()
+                            })
+                            .color(MUTED)
+                            .size(13.0),
+                        );
+                        ui.add_space(6.0);
+                        actions.extend(self.card_body(ui, card));
+                    });
+            },
+        );
         actions
     }
 
@@ -1029,9 +1051,28 @@ impl NexusApp {
                     });
                 }
                 central_panel::CentralAction::RefreshAdmin => {
+                    self.send_central(CentralJob::Categories {
+                        server_url: server_url.clone(),
+                        token: authed(&token),
+                        change: None,
+                    });
                     self.send_central(CentralJob::AdminList {
                         server_url,
                         token: authed(&token),
+                    });
+                }
+                central_panel::CentralAction::ChangeCategory(change) => {
+                    self.send_central(CentralJob::Categories {
+                        server_url,
+                        token: authed(&token),
+                        change: Some(change),
+                    });
+                }
+                central_panel::CentralAction::RepoPreview(repo) => {
+                    self.send_central(CentralJob::RepoPreview {
+                        server_url,
+                        token: authed(&token),
+                        repo,
                     });
                 }
                 central_panel::CentralAction::SaveApp => {
@@ -1106,6 +1147,39 @@ impl NexusApp {
 
     fn apply_central(&mut self, event: CentralEvent) {
         match event {
+            CentralEvent::Categories(result) => match result {
+                Ok(categories) => {
+                    if !self.central.draft_category.is_empty()
+                        && !categories.contains(&self.central.draft_category)
+                    {
+                        self.central.draft_category.clear();
+                    }
+                    self.central.categories = categories;
+                    self.central.message = Some("Category list updated.".into());
+                    if let Some(server_url) = self.central.server_url.clone() {
+                        self.send_central(CentralJob::AdminList {
+                            server_url: server_url.clone(),
+                            token: self.central.token.clone().unwrap_or_default(),
+                        });
+                        self.send_central(CentralJob::Catalog {
+                            server_url,
+                            token: self.central.token.clone(),
+                        });
+                    }
+                }
+                Err(message) => self.central.message = Some(message),
+            },
+            CentralEvent::RepoPreview { repo, result } => {
+                if self.central.draft_repo == repo {
+                    match result {
+                        Ok(preview) => {
+                            self.central.summary_preview = Some(preview);
+                            self.central.message = Some("Repository text loaded. Review the suggested summary before using it.".into());
+                        }
+                        Err(message) => self.central.message = Some(message),
+                    }
+                }
+            }
             CentralEvent::Session(Ok(Some((token, account, catalog)))) => {
                 self.central.token = Some(token);
                 self.central.account = Some(account);
@@ -1492,6 +1566,7 @@ fn cta(ui: &mut egui::Ui, label: &str, kind: CtaKind, width: f32) -> egui::Respo
             .size(13.0)
             .color(color),
     )
+    .wrap()
     .fill(fill)
     .stroke(stroke)
     .min_size(Vec2::new(width, 34.0))
@@ -1591,117 +1666,138 @@ fn report_client_failure(events: &Sender<Event>, job: Job, message: &str) {
 }
 
 fn central_job(job: CentralJob, events: &Sender<Event>) {
-    let event = match job {
-        CentralJob::LoadSession { server_url } => {
-            CentralEvent::Session(load_central_session(&server_url))
-        }
-        CentralJob::StartLogin { server_url } => {
-            CentralEvent::DeviceStarted(start_login(&server_url))
-        }
-        CentralJob::Poll {
-            server_url,
-            poll_id,
-        } => CentralEvent::Polled(poll_login(&server_url, &poll_id)),
-        CentralJob::SignOut { server_url, token } => {
-            if let Ok(client) = CentralClient::new(&server_url, Some(token)) {
-                let _ = client.logout();
+    let event =
+        match job {
+            CentralJob::Categories {
+                server_url,
+                token,
+                change,
+            } => CentralEvent::Categories(central_call(&server_url, Some(token), |client| {
+                match change {
+                    Some(change) => client.change_category(&change),
+                    None => client.categories(),
+                }
+            })),
+            CentralJob::RepoPreview {
+                server_url,
+                token,
+                repo,
+            } => {
+                let result = central_call(&server_url, Some(token), |client| {
+                    client.repo_preview(&repo)
+                });
+                CentralEvent::RepoPreview { repo, result }
             }
-            central::clear_session();
-            CentralEvent::Note(Ok("Signed out. Installed copies stay on disk.".into()))
-        }
-        CentralJob::Catalog { server_url, token } => {
-            CentralEvent::Catalog(central_call(&server_url, token, |client| client.catalog()))
-        }
-        CentralJob::AdminList { server_url, token } => {
-            CentralEvent::Admin(central_call(&server_url, Some(token), |client| {
-                client.admin_apps()
-            }))
-        }
-        CentralJob::SaveApp {
-            server_url,
-            token,
-            app,
-        } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
-            client.upsert_app(&app).map(|_| "Saved the app.".into())
-        })),
-        CentralJob::Publish {
-            server_url,
-            token,
-            id,
-            published,
-        } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
-            client.set_published(&id, published)?;
-            Ok(format!(
-                "{} is now {} in the launcher.",
-                id,
-                if published { "shown" } else { "hidden" }
-            ))
-        })),
-        CentralJob::DeleteApp {
-            server_url,
-            token,
-            id,
-        } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
-            client.delete_app(&id)?;
-            Ok("Removed the app.".into())
-        })),
-        CentralJob::Grants {
-            server_url,
-            token,
-            id,
-        } => CentralEvent::Grants(central_call(&server_url, Some(token), |client| {
-            client.grants(&id)
-        })),
-        CentralJob::Grant {
-            server_url,
-            token,
-            id,
-            login,
-        } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
-            let grant = client.grant(&id, &login)?;
-            Ok(format!("Granted {} ({}).", grant.login, grant.github_id))
-        })),
-        CentralJob::Revoke {
-            server_url,
-            token,
-            id,
-            github_id,
-        } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
-            client.revoke(&id, github_id)?;
-            Ok("Revoked the grant. Copies already downloaded stay installed.".into())
-        })),
-        CentralJob::Release {
-            server_url,
-            token,
-            id,
-        } => {
-            let os = catalog::current_platform().label();
-            let arch = catalog::current_arch();
-            CentralEvent::PrivateRelease {
-                id: id.clone(),
-                result: central_call(&server_url, Some(token), |client| {
-                    client.release(&id, os, arch)
-                }),
+            CentralJob::LoadSession { server_url } => {
+                CentralEvent::Session(load_central_session(&server_url))
             }
-        }
-        CentralJob::InstallPrivate {
-            server_url,
-            token,
-            id,
-        } => {
-            let _ = events.send(Event::Progress {
-                id: id.clone(),
-                message: "Downloading from the broker".into(),
-                fraction: Some(0.2),
-            });
-            let result = install_private(&server_url, &token, &id);
-            let _ = events.send(Event::Installed {
+            CentralJob::StartLogin { server_url } => {
+                CentralEvent::DeviceStarted(start_login(&server_url))
+            }
+            CentralJob::Poll {
+                server_url,
+                poll_id,
+            } => CentralEvent::Polled(poll_login(&server_url, &poll_id)),
+            CentralJob::SignOut { server_url, token } => {
+                if let Ok(client) = CentralClient::new(&server_url, Some(token)) {
+                    let _ = client.logout();
+                }
+                central::clear_session();
+                CentralEvent::Note(Ok("Signed out. Installed copies stay on disk.".into()))
+            }
+            CentralJob::Catalog { server_url, token } => {
+                CentralEvent::Catalog(central_call(&server_url, token, |client| client.catalog()))
+            }
+            CentralJob::AdminList { server_url, token } => {
+                CentralEvent::Admin(central_call(&server_url, Some(token), |client| {
+                    client.admin_apps()
+                }))
+            }
+            CentralJob::SaveApp {
+                server_url,
+                token,
+                app,
+            } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
+                client.upsert_app(&app).map(|_| "Saved the app.".into())
+            })),
+            CentralJob::Publish {
+                server_url,
+                token,
                 id,
-                result: result.map(|_| ()),
-            });
-            return;
-        }
-    };
+                published,
+            } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
+                client.set_published(&id, published)?;
+                Ok(format!(
+                    "{} is now {} in the launcher.",
+                    id,
+                    if published { "shown" } else { "hidden" }
+                ))
+            })),
+            CentralJob::DeleteApp {
+                server_url,
+                token,
+                id,
+            } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
+                client.delete_app(&id)?;
+                Ok("Removed the app.".into())
+            })),
+            CentralJob::Grants {
+                server_url,
+                token,
+                id,
+            } => CentralEvent::Grants(central_call(&server_url, Some(token), |client| {
+                client.grants(&id)
+            })),
+            CentralJob::Grant {
+                server_url,
+                token,
+                id,
+                login,
+            } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
+                let grant = client.grant(&id, &login)?;
+                Ok(format!("Granted {} ({}).", grant.login, grant.github_id))
+            })),
+            CentralJob::Revoke {
+                server_url,
+                token,
+                id,
+                github_id,
+            } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
+                client.revoke(&id, github_id)?;
+                Ok("Revoked the grant. Copies already downloaded stay installed.".into())
+            })),
+            CentralJob::Release {
+                server_url,
+                token,
+                id,
+            } => {
+                let os = catalog::current_platform().label();
+                let arch = catalog::current_arch();
+                CentralEvent::PrivateRelease {
+                    id: id.clone(),
+                    result: central_call(&server_url, Some(token), |client| {
+                        client.release(&id, os, arch)
+                    }),
+                }
+            }
+            CentralJob::InstallPrivate {
+                server_url,
+                token,
+                id,
+            } => {
+                let _ = events.send(Event::Progress {
+                    id: id.clone(),
+                    message: "Downloading from the broker".into(),
+                    fraction: Some(0.2),
+                });
+                let result = install_private(&server_url, &token, &id);
+                let _ = events.send(Event::Installed {
+                    id,
+                    result: result.map(|_| ()),
+                });
+                return;
+            }
+        };
     let _ = events.send(Event::Central(event));
 }
 
@@ -1854,6 +1950,58 @@ mod tests {
             dialog_error: None,
             children: Vec::new(),
             central: central_panel::CentralPanel::new(None),
+        }
+    }
+
+    #[test]
+    fn grid_cards_stack_text_vertically_and_stay_inside_window() {
+        for width in [780.0, 1120.0] {
+            let mut app = app();
+            let catalog = catalog::parse_catalog("[[app]]\nid='one'\nname='Tool One'\nsummary='Capture and organize screenshots for your projects.'\n[[app]]\nid='two'\nname='Tool Two'\nsummary='Review sequences of captured images.'").unwrap();
+            app.cards = catalog.apps.into_iter().map(Card::from_entry).collect();
+            let ctx = egui::Context::default();
+            theme::apply(&ctx);
+            let mut output = None;
+            for _ in 0..2 {
+                output = Some(ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 760.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            app.grid(ui);
+                        });
+                    },
+                ));
+            }
+            let output = output.unwrap();
+            let text = |label: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.job.text == label => Some(text),
+                        _ => None,
+                    })
+                    .unwrap()
+            };
+            let name = text("TOOL ONE");
+            let summary = text("Capture and organize screenshots for your projects.");
+            assert!(summary.pos.y > name.pos.y);
+            assert!((summary.pos.x - name.pos.x).abs() < 2.0);
+            assert!(text("TOOL TWO").pos.x > name.pos.x + 200.0);
+            for shape in output.shapes {
+                if let egui::Shape::Text(text) = shape.shape {
+                    assert!(
+                        text.pos.x + text.galley.size().x <= width + 1.0,
+                        "text escaped the window"
+                    );
+                }
+            }
         }
     }
 

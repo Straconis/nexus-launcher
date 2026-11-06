@@ -4,6 +4,7 @@
 //! or the release credential. Private bytes are proxied only after a session
 //! and a grant (or admin) check on that request.
 
+mod admin_tools;
 pub mod auth;
 pub mod config;
 pub mod db;

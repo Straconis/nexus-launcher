@@ -366,3 +366,38 @@ fn tighten_db_file(path: &Path) {
         let _ = std::fs::set_permissions(path, permissions);
     }
 }
+
+impl Database {
+    pub fn categories(&self) -> Result<Vec<String>, ApiFailure> {
+        let conn = self.lock()?;
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS categories (name TEXT PRIMARY KEY);")?;
+        let mut stmt = conn.prepare("SELECT name FROM categories UNION SELECT category FROM apps WHERE category IS NOT NULL AND trim(category) != '' ORDER BY 1 COLLATE NOCASE")?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn change_category(&self, name: &str, replacement: Option<&str>) -> Result<(), ApiFailure> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS categories (name TEXT PRIMARY KEY);")?;
+        if let Some(new_name) = replacement {
+            tx.execute(
+                "INSERT OR IGNORE INTO categories(name) VALUES (?)",
+                [new_name],
+            )?;
+        }
+        if !name.is_empty() {
+            tx.execute(
+                "UPDATE apps SET category = ? WHERE category = ?",
+                params![replacement, name],
+            )?;
+            if replacement != Some(name) {
+                tx.execute("DELETE FROM categories WHERE name = ?", [name])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+}

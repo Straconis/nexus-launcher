@@ -73,6 +73,31 @@ impl CentralClient {
         self.send("GET", "v1/catalog", self.token.is_some(), None)
     }
 
+    pub fn categories(&self) -> Result<Vec<String>, String> {
+        self.send("GET", "v1/admin/categories", true, None)
+    }
+
+    pub fn change_category(
+        &self,
+        change: &nexus_protocol::CategoryChange,
+    ) -> Result<Vec<String>, String> {
+        self.send(
+            "POST",
+            "v1/admin/categories",
+            true,
+            Some(serde_json::to_value(change).map_err(|e| e.to_string())?),
+        )
+    }
+
+    pub fn repo_preview(&self, repo: &str) -> Result<nexus_protocol::RepoPreview, String> {
+        self.send(
+            "POST",
+            "v1/admin/repo-preview",
+            true,
+            Some(serde_json::json!({ "repo": repo })),
+        )
+    }
+
     pub fn admin_apps(&self) -> Result<Vec<AdminApp>, String> {
         self.send("GET", "v1/admin/apps", true, None)
     }
