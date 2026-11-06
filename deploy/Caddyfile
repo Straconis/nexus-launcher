@@ -1,0 +1,4 @@
+# Set NEXUS_DOMAIN in Caddy's service environment to the public hostname.
+{$NEXUS_DOMAIN} {
+    reverse_proxy 127.0.0.1:8787
+}

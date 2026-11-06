@@ -55,6 +55,8 @@ struct NexusApp {
     show_supported: bool,
     contrast_frame: bool,
     preferences_open: bool,
+    server_address: String,
+    connection_feedback: Option<String>,
     open_maximized: bool,
     preferences_error: Option<String>,
     cards: Vec<Card>,
@@ -312,6 +314,11 @@ impl NexusApp {
             show_supported: false,
             contrast_frame: preferences.charcoal_frame,
             preferences_open: false,
+            server_address: central::config_path()
+                .and_then(|path| central::load_config(&path).ok().flatten())
+                .map(|config| config.server_url)
+                .unwrap_or_default(),
+            connection_feedback: None,
             open_maximized: preferences.open_maximized,
             preferences_error: None,
             cards: Vec::new(),
@@ -822,6 +829,29 @@ impl eframe::App for NexusApp {
                 .collapsible(false)
                 .default_width(380.0)
                 .show(ctx, |ui| {
+                    ui.heading("Nexus service");
+                    ui.label(if self.central.server_url.is_some() {
+                        "Connected mode: catalog and GitHub lookups use your Nexus service."
+                    } else {
+                        "Standalone mode: GitHub allows 60 anonymous requests per hour per shared IP."
+                    });
+                    ui.label("Service address");
+                    ui.text_edit_singleline(&mut self.server_address);
+                    if ui.button("SAVE SERVICE ADDRESS").clicked() {
+                        let result = central::config_path().ok_or_else(|| "No configuration directory available".to_string())
+                            .and_then(|path| central::save_config(&path, &self.server_address));
+                        self.connection_feedback = Some(match result {
+                            Ok(()) => {
+                                if central::validate_server_url(&self.server_address).ok().as_ref() != self.central.server_url.as_ref() {
+                                    central::clear_session();
+                                }
+                                "Service address saved. Restart Nexus Launcher to connect.".into()
+                            },
+                            Err(error) => format!("Could not save service address: {error}"),
+                        });
+                    }
+                    if let Some(message) = &self.connection_feedback { ui.label(message); }
+                    ui.separator();
                     ui.heading("Appearance");
                     let frame_changed = ui
                         .checkbox(&mut self.contrast_frame, "Charcoal header and footer")
@@ -2390,6 +2420,11 @@ mod tests {
             show_supported: false,
             contrast_frame: true,
             preferences_open: false,
+            server_address: central::config_path()
+                .and_then(|path| central::load_config(&path).ok().flatten())
+                .map(|config| config.server_url)
+                .unwrap_or_default(),
+            connection_feedback: None,
             open_maximized: true,
             preferences_error: None,
             cards: Vec::new(),

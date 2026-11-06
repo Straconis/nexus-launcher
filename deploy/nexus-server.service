@@ -1,0 +1,23 @@
+[Unit]
+Description=Straconis Nexus catalog service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus
+Group=nexus
+WorkingDirectory=/var/lib/nexus
+EnvironmentFile=/etc/nexus/server.env
+ExecStart=/opt/nexus/nexus-server
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nexus
+
+[Install]
+WantedBy=multi-user.target

@@ -142,3 +142,13 @@ Desktop tests cover the server URL rules, the session file mode on Unix, and red
 ### Public release metadata
 
 Public app releases and language badges are cached in the broker for five minutes. The broker uses its OAuth application credentials for public GitHub metadata when no release token is configured; credentials stay on the server. Previously cached metadata remains usable if GitHub is temporarily unavailable. Visibility is checked before serving the cache. Desktop installations without a central server still use GitHub's anonymous API limits.
+
+### Public host deployment
+
+Use a Linux host with a DNS hostname pointing to it and incoming ports 80/443 available. Keep broker port 8787 on loopback behind Caddy; `deploy/Caddyfile` provides HTTPS termination. Set `NEXUS_DOMAIN` in Caddy's service environment to your hostname.
+
+Install the compiled `nexus-server` at `/opt/nexus/nexus-server`, create a dedicated `nexus` system user, and create `/var/lib/nexus` owned by that user. Store the environment file at `/etc/nexus/server.env` readable only by root and the nexus group. Set `NEXUS_BIND=127.0.0.1:8787` and `NEXUS_DATABASE=/var/lib/nexus/nexus.sqlite`. Install `deploy/nexus-server.service` into systemd.
+
+To preserve the current catalog, stop the existing broker and make a SQLite backup before transferring the database to `/var/lib/nexus/nexus.sqlite`. Set owner nexus:nexus and mode 0600. Transfer existing OAuth application configuration privately; no credentials belong in the desktop installer or repository. Start the service and verify `/v1/health`, `/v1/catalog`, and a public app's `/v1/apps/{id}/public-metadata` through HTTPS before configuring launchers.
+
+In launcher Preferences, save the HTTPS service address and restart. The existing 0.3.0-alpha release can use the same address by placing `server_url = "https://YOUR_HOST"` in `central.toml` in its per-user configuration directory. Switching service addresses clears the saved session; sign in to the new service when admin access is needed. Public browsing does not require sign-in.

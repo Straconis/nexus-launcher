@@ -9,5 +9,5 @@ mod config;
 mod session;
 
 pub use client::CentralClient;
-pub use config::{config_path, load_config, validate_server_url, ServerConfig};
+pub use config::{config_path, load_config, save_config, validate_server_url, ServerConfig};
 pub use session::{clear_session, load_session, save_session};
