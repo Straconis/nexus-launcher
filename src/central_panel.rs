@@ -38,6 +38,8 @@ pub struct CentralPanel {
     pub draft_name: String,
     pub draft_summary: String,
     pub draft_repo: String,
+    pub draft_category: String,
+    pub draft_homepage: String,
     pub draft_private: bool,
     pub draft_login: String,
     pub selected: String,
@@ -63,6 +65,8 @@ impl CentralPanel {
             draft_name: String::new(),
             draft_summary: String::new(),
             draft_repo: String::new(),
+            draft_category: String::new(),
+            draft_homepage: String::new(),
             draft_private: true,
             draft_login: String::new(),
             selected: String::new(),
@@ -187,6 +191,16 @@ impl CentralPanel {
             }
         });
         ui.add(egui::TextEdit::singleline(&mut self.draft_summary).hint_text("summary"));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("category").color(MUTED));
+            ui.add(egui::TextEdit::singleline(&mut self.draft_category).desired_width(120.0));
+            ui.label(RichText::new("homepage").color(MUTED));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.draft_homepage)
+                    .desired_width(240.0)
+                    .hint_text("https://"),
+            );
+        });
         for app in self.admin_apps.clone() {
             ui.horizontal(|ui| {
                 let mark = if app.published { "published" } else { "draft" };

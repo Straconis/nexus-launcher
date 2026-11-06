@@ -1024,8 +1024,8 @@ impl NexusApp {
                         id: self.central.draft_id.clone(),
                         name: self.central.draft_name.clone(),
                         summary: self.central.draft_summary.clone(),
-                        category: None,
-                        homepage: None,
+                        category: Some(self.central.draft_category.clone()),
+                        homepage: Some(self.central.draft_homepage.clone()),
                         repo: Some(self.central.draft_repo.clone()),
                         visibility: if self.central.draft_private {
                             Visibility::Private
