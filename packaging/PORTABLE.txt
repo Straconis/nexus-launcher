@@ -1,0 +1,28 @@
+Nexus Launcher (portable build)
+==============================
+
+Nexus Launcher is a native desktop launcher for the Straconis tool suite.
+It reads catalog/apps.toml beside this program, looks up each tool's latest
+public GitHub release, installs a build under your user account, and starts
+it from a dark card grid.
+
+Linux
+  ./nexus-launcher
+  ./nexus-launcher --check
+
+Windows
+  nexus-launcher.exe
+  nexus-launcher.exe --check
+
+Keep catalog/apps.toml next to the executable. Add another [[app]] table in
+that file and press REFRESH. You do not recompile the launcher to add a tool.
+
+This alpha has no system tray and no launch-at-login. MSI, deb, DMG, and
+setup executables are downloaded and handed to the operating system; the
+launcher does not run them silently and does not know whether installation
+finished. The seeded tools stay on COMING SOON until their repositories
+publish a release.
+
+--check parses the catalog and does not open a window or call GitHub.
+There is no macOS binary in the v0.1.0-alpha release. Build from source
+with Rust 1.99.1 if you need another platform. See README.md.

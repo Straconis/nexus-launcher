@@ -17,6 +17,16 @@ cargo run -- --check
 cargo test
 ```
 
+## Downloads
+
+Tagged releases publish binaries on [GitHub Releases](https://github.com/Straconis/nexus-launcher/releases). `v0.1.0-alpha` includes:
+
+- `nexus-launcher-linux-x86_64.tar.gz` — Linux x86_64 binary plus `catalog/apps.toml`
+- `nexus-launcher-windows-x86_64.zip` — Windows x86_64 portable build
+- `SHA256SUMS.txt`
+
+macOS binaries are not part of this alpha. Unpack an archive and run `nexus-launcher` or `nexus-launcher.exe` from that directory so the program finds `catalog/apps.toml`. `--check` parses the catalog and exits. Runtime requirements and the alpha limits are in the release notes. Building from source is described under [Build](#build).
+
 ## What it is
 
 Each catalog entry is one desktop tool. The launcher asks the unauthenticated GitHub API for that repository's latest release, picks a build for the machine you are on, and shows one card:
