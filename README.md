@@ -19,15 +19,20 @@ cargo test
 
 ## Downloads
 
-Tagged releases publish binaries on [GitHub Releases](https://github.com/Straconis/nexus-launcher/releases). `v0.1.0-alpha` includes:
+Tagged releases publish binaries on [GitHub Releases](https://github.com/Straconis/nexus-launcher/releases). The 0.3.0-alpha packaging includes:
 
-- `nexus-launcher-linux-x86_64.tar.gz` — Linux x86_64 binary plus `catalog/apps.toml`
-- `nexus-launcher-windows-x86_64.zip` — Windows x86_64 portable build
+- `nexus-launcher-setup-0.3.0-alpha-windows-x86_64.exe` — Windows per-user installer
+- `nexus-launcher-windows-x86_64.zip` — Windows portable build
+- `nexus-launcher-linux-x86_64.tar.gz` — Linux binary and seed catalog
 - `SHA256SUMS.txt`
 
-macOS binaries are not part of this alpha. Unpack an archive and run `nexus-launcher` or `nexus-launcher.exe` from that directory so the program finds `catalog/apps.toml`. `--check` parses the catalog and exits. Runtime requirements and the alpha limits are in the release notes. Building from source is described under [Build](#build).
+The Windows installer creates **Start → Straconis Software → Straconis Software Dev Nexus Launcher**, installs under `%LOCALAPPDATA%\Programs\Straconis Software\Dev Nexus Launcher`, and adds an uninstall entry. It does not request administrator rights. Reinstalling preserves an edited `catalog/apps.toml`; uninstalling preserves that catalog, sign-in configuration, and managed tool data. The installer compiler is pinned to Inno Setup 6.4.3 with an upstream SHA-256 check.
 
-This source tree is **0.3.0-alpha**. It is not a published GitHub release. `v0.1.0-alpha` is the only published download, and it does not include central sign-in. The separate self-update branch is `0.1.1-alpha` and is not merged here.
+Portable archives can be extracted anywhere writable; run the included executable. `--check` parses the catalog without opening the GUI. The window opens maximized; its restored size is 1440×900. **Preferences** in the compact account toolbar controls the charcoal header/footer and maximized window. Choices are saved to your profile.
+
+The launcher works from its local catalog without a broker. Central administration needs a separately running broker and a reachable `server_url` in the user's `central.toml`; the installer does not bundle server credentials or point to the developer's local VM. See [Central catalog](#central-catalog). macOS binaries are not included.
+
+The source version is **0.3.0-alpha**; consult the Releases page for published artifacts. The separate launcher-self-update branch is not merged here. Individual managed-app updates are available through **REFRESH** and **UPDATE**.
 
 ## Central catalog
 

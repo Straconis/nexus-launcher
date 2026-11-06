@@ -20,9 +20,21 @@ that file and press REFRESH. You do not recompile the launcher to add a tool.
 This alpha has no system tray and no launch-at-login. MSI, deb, DMG, and
 setup executables are downloaded and handed to the operating system; the
 launcher does not run them silently and does not know whether installation
-finished. The seeded tools stay on COMING SOON until their repositories
-publish a release.
+finished. Cards depend on each repository publishing a compatible release build.
 
 --check parses the catalog and does not open a window or call GitHub.
 There is no macOS binary in the v0.1.0-alpha release. Build from source
 with Rust 1.99.1 if you need another platform. See README.md.
+
+Windows installer
+  The setup EXE adds Start > Straconis Software >
+  Straconis Software Dev Nexus Launcher, without an administrator prompt.
+  Reinstall/uninstall preserve an edited catalog and user data.
+
+Central administration
+  Configure a separately running broker using server_url in central.toml.
+  No server credentials or developer VM address are bundled.
+
+Window appearance
+  The window opens maximized. Use Preferences in the account toolbar to
+  compare charcoal header/footer colors with the original dark appearance.

@@ -20,6 +20,7 @@ use nexus_protocol::{CatalogApp, ReleaseMeta, Visibility};
 mod central_panel;
 
 pub fn run(catalog_path: PathBuf) -> eframe::Result {
+    let preferences = crate::preferences::load().unwrap_or_default();
     let icon = image::load_from_memory(include_bytes!(
         "../assets/branding/straconis-nexus-launcher.png"
     ))
@@ -34,8 +35,9 @@ pub fn run(catalog_path: PathBuf) -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_icon(icon)
-            .with_inner_size([1120.0, 760.0])
-            .with_min_inner_size([780.0, 540.0]),
+            .with_inner_size([1440.0, 900.0])
+            .with_min_inner_size([960.0, 680.0])
+            .with_maximized(preferences.open_maximized),
         ..Default::default()
     };
     eframe::run_native(
@@ -43,7 +45,7 @@ pub fn run(catalog_path: PathBuf) -> eframe::Result {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx);
-            Ok(Box::new(NexusApp::new(catalog_path)))
+            Ok(Box::new(NexusApp::new(catalog_path, preferences)))
         }),
     )
 }
@@ -52,6 +54,9 @@ struct NexusApp {
     catalog_path: PathBuf,
     show_supported: bool,
     contrast_frame: bool,
+    preferences_open: bool,
+    open_maximized: bool,
+    preferences_error: Option<String>,
     cards: Vec<Card>,
     catalog_error: Option<String>,
     rate: Option<RateSnapshot>,
@@ -255,6 +260,7 @@ enum CentralEvent {
 }
 
 enum UiAction {
+    Preferences,
     ShowPage(bool),
     Refresh,
     Retry(String),
@@ -274,7 +280,7 @@ enum CtaKind {
 }
 
 impl NexusApp {
-    fn new(catalog_path: PathBuf) -> Self {
+    fn new(catalog_path: PathBuf, preferences: crate::preferences::Preferences) -> Self {
         let (jobs, job_rx) = mpsc::channel();
         let (event_tx, events) = mpsc::channel();
         let (central_jobs, central_rx) = mpsc::channel();
@@ -294,7 +300,10 @@ impl NexusApp {
         let mut app = Self {
             catalog_path,
             show_supported: false,
-            contrast_frame: true,
+            contrast_frame: preferences.charcoal_frame,
+            preferences_open: false,
+            open_maximized: preferences.open_maximized,
+            preferences_error: None,
             cards: Vec::new(),
             catalog_error: None,
             rate: None,
@@ -493,6 +502,7 @@ impl NexusApp {
 
     fn handle(&mut self, action: UiAction) {
         match action {
+            UiAction::Preferences => self.preferences_open = true,
             UiAction::ShowPage(supported) => self.show_supported = supported,
             UiAction::Refresh => self.reload(),
             UiAction::Retry(id) => self.retry(&id),
@@ -759,6 +769,45 @@ impl eframe::App for NexusApp {
                     actions.extend(self.grid(ui));
                 });
             });
+        if self.preferences_open {
+            let mut open = self.preferences_open;
+            egui::Window::new("Preferences")
+                .open(&mut open)
+                .collapsible(false)
+                .default_width(380.0)
+                .show(ctx, |ui| {
+                    ui.heading("Appearance");
+                    let frame_changed = ui
+                        .checkbox(&mut self.contrast_frame, "Charcoal header and footer")
+                        .changed();
+                    let window_changed = ui
+                        .checkbox(&mut self.open_maximized, "Open maximized")
+                        .changed();
+                    if window_changed {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(
+                            self.open_maximized,
+                        ));
+                    }
+                    if frame_changed || window_changed {
+                        self.preferences_error =
+                            crate::preferences::save(&crate::preferences::Preferences {
+                                charcoal_frame: self.contrast_frame,
+                                open_maximized: self.open_maximized,
+                            })
+                            .err();
+                    }
+                    if let Some(error) = &self.preferences_error {
+                        ui.label(format!("Could not save preferences: {error}"));
+                    } else {
+                        ui.label(
+                            RichText::new("Changes are saved automatically.")
+                                .small()
+                                .color(MUTED),
+                        );
+                    }
+                });
+            self.preferences_open = open;
+        }
         actions.extend(self.dialogs(ctx));
         for action in actions {
             self.handle(action);
@@ -1174,15 +1223,21 @@ impl NexusApp {
     }
 
     fn central_actions(&mut self, ui: &mut egui::Ui) -> Vec<UiAction> {
+        let mut ui_actions = Vec::new();
         let server_url = self.central.server_url.clone();
         let token = self.central.token.clone();
         for action in self.central.show(ui) {
+            if matches!(action, central_panel::CentralAction::Preferences) {
+                ui_actions.push(UiAction::Preferences);
+                continue;
+            }
             let Some(server_url) = server_url.clone() else {
                 continue;
             };
             let authed = |token: &Option<String>| token.clone().unwrap_or_default();
             self.central.message = Some("Working…".into());
             match action {
+                central_panel::CentralAction::Preferences => {}
                 central_panel::CentralAction::StartLogin => {
                     self.send_central(CentralJob::StartLogin { server_url });
                 }
@@ -1332,7 +1387,7 @@ impl NexusApp {
                 }
             }
         }
-        Vec::new()
+        ui_actions
     }
 
     fn apply_central(&mut self, event: CentralEvent) {
@@ -1637,7 +1692,7 @@ impl NexusApp {
         };
     }
 
-    fn footer(&mut self, ui: &mut egui::Ui) {
+    fn footer(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             brand_link(
                 ui,
@@ -1654,9 +1709,6 @@ impl NexusApp {
                 Vec2::splat(58.0),
                 "https://s3dlabs.com",
             );
-            ui.add_space(16.0);
-            ui.checkbox(&mut self.contrast_frame, "Charcoal frame")
-                .on_hover_text("Compare charcoal header/footer with the original dark frame.");
         });
         ui.add_space(4.0);
         let root = match &self.data_root {
@@ -2242,6 +2294,9 @@ mod tests {
             catalog_path: PathBuf::from("catalog/apps.toml"),
             show_supported: false,
             contrast_frame: true,
+            preferences_open: false,
+            open_maximized: true,
+            preferences_error: None,
             cards: Vec::new(),
             catalog_error: None,
             rate: None,

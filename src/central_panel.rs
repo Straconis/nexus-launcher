@@ -7,9 +7,11 @@ use eframe::egui::{self, RichText};
 use nexus_protocol::{Account, AdminApp, CatalogApp, Grant};
 
 use super::{cta, CtaKind, ACCENT, BORDER, MUTED, PANEL, TEXT};
+#[cfg(test)]
 use crate::theme;
 
 pub enum CentralAction {
+    Preferences,
     StartLogin,
     SignOut,
     RefreshAdmin,
@@ -143,36 +145,36 @@ impl CentralPanel {
 
     pub fn show(&mut self, ui: &mut egui::Ui) -> Vec<CentralAction> {
         let mut actions = Vec::new();
+        if !self.account.as_ref().is_some_and(|account| account.admin) {
+            self.admin_open = false;
+            self.category_open = false;
+            self.status_open = false;
+            self.project_type_open = false;
+        }
         egui::Frame::new()
             .fill(PANEL)
             .stroke(egui::Stroke::new(1.0_f32, BORDER))
-            .inner_margin(12)
-            .corner_radius(8)
+            .inner_margin(egui::Margin::symmetric(10, 5))
+            .corner_radius(6)
             .show(ui, |ui| {
-                if ui.button("HELP / HOW TO USE").clicked() {
-                    self.help_open = true;
-                }
-                ui.label(
-                    RichText::new("ACCOUNT")
-                        .family(theme::orbitron())
-                        .size(11.0)
-                        .color(ACCENT),
-                );
-                match &self.server_url {
-                    None => {
-                        ui.label(
-                            RichText::new(
-                                "Central catalog is off. Set server_url in central.toml. The local catalog still works.",
-                            )
-                            .color(MUTED)
-                            .size(12.0),
-                        );
+                ui.horizontal_wrapped(|ui| {
+                    match &self.server_url {
+                        None => {
+                            ui.label(RichText::new("Local catalog").small().color(MUTED));
+                        }
+                        Some(_) => actions.extend(self.signed_in_row(ui)),
                     }
-                    Some(_) => actions.extend(self.signed_in_row(ui)),
-                }
-                if let Some(message) = &self.message {
-                    ui.label(RichText::new(message).color(TEXT).size(12.0));
-                }
+                    ui.separator();
+                    if ui.small_button("Help").clicked() {
+                        self.help_open = true;
+                    }
+                    if ui.small_button("Preferences").clicked() {
+                        actions.push(CentralAction::Preferences);
+                    }
+                    if let Some(message) = &self.message {
+                        ui.label(RichText::new(message).size(11.0).color(MUTED));
+                    }
+                });
             });
         if self.admin_open {
             let mut open = self.admin_open;
@@ -331,45 +333,44 @@ impl CentralPanel {
         if let Some(account) = &self.account {
             let role = if account.admin { "admin" } else { "member" };
             ui.label(
-                RichText::new(format!(
-                    "{} · github id {} · {role}",
-                    account.login, account.github_id
-                ))
-                .color(TEXT)
-                .size(13.0),
-            );
-            ui.horizontal(|ui| {
-                if cta(ui, "SIGN OUT", CtaKind::Secondary, 120.0).clicked() {
-                    actions.push(CentralAction::SignOut);
-                }
-                if account.admin && cta(ui, "MANAGE", CtaKind::Primary, 120.0).clicked() {
-                    self.admin_open = !self.admin_open || self.manage_supported;
-                    self.manage_supported = false;
-                    self.editor_open = false;
-                    self.project_type_open = false;
-                    if self.admin_open {
-                        actions.push(CentralAction::RefreshAdmin);
-                    }
-                }
-                if account.admin && ui.button("MANAGE SUPPORTED PROJECTS").clicked() {
-                    self.admin_open = true;
-                    self.manage_supported = true;
-                    self.editor_open = false;
-                    self.category_open = false;
+                RichText::new(format!("{} · {role}", account.login))
+                    .size(12.0)
+                    .color(TEXT),
+            )
+            .on_hover_text(format!("GitHub ID {}", account.github_id));
+            if ui.small_button("Sign out").clicked() {
+                actions.push(CentralAction::SignOut);
+            }
+            if account.admin && ui.small_button("Manage apps").clicked() {
+                self.admin_open = !self.admin_open || self.manage_supported;
+                self.manage_supported = false;
+                self.editor_open = false;
+                self.project_type_open = false;
+                if self.admin_open {
                     actions.push(CentralAction::RefreshAdmin);
                 }
-            });
+            }
+            if account.admin
+                && ui
+                    .small_button("Manage projects")
+                    .on_hover_text("Manage supported project listings and types")
+                    .clicked()
+            {
+                self.admin_open = true;
+                self.manage_supported = true;
+                self.editor_open = false;
+                self.category_open = false;
+                actions.push(CentralAction::RefreshAdmin);
+            }
         } else if self.waiting {
+            ui.spinner();
             if let Some(code) = &self.user_code {
                 ui.label(
-                    RichText::new(format!(
-                        "Enter {code} at GitHub, then this window finishes signing in."
-                    ))
-                    .color(TEXT)
-                    .size(13.0),
+                    RichText::new(format!("Enter {code} at GitHub to finish signing in."))
+                        .size(12.0),
                 );
             }
-        } else if cta(ui, "SIGN IN", CtaKind::Primary, 140.0).clicked() {
+        } else if ui.small_button("Sign in").clicked() {
             actions.push(CentralAction::StartLogin);
         }
         actions
@@ -740,6 +741,7 @@ impl CentralPanel {
 }
 
 const HELP_TOPICS: &[(&str, &str)] = &[
+    ("Preferences and appearance", "Use Preferences in the account toolbar to choose charcoal header/footer colors or a maximized window. Changes save automatically to your user profile. Appearance controls stay out of the footer."),
     ("Supported project types", "Supported projects have their own Project type dropdown, such as Twitch stream, Podcast, or Community. MANAGE PROJECT TYPES adds, renames, or removes these shared choices. This list is separate from software and hardware categories. Use only public-approved copy in summaries."),
     ("Update installed apps", "REFRESH checks each repository's latest release. An installed app with a newer compatible release shows UPDATE. Nexus verifies and stages the download, then replaces its managed copy. Installer packages open through the operating system and may need your input. It does not update unrelated system installations or install silently in the background."),
     ("Supported projects", "SUPPORTED PROJECTS shows the projects Straconis Software supports. Admins can use MANAGE SUPPORTED PROJECTS to add and edit a name, summary, and https project link, then show or hide the card. These cards open project websites; they do not install or update software."),

@@ -59,6 +59,8 @@ jobs:
   windows:
     name: windows-x86_64
     runs-on: windows-latest
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - uses: actions/checkout@v4
 

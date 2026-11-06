@@ -26,6 +26,17 @@ jobs:
       - run: cargo test --workspace
       - run: cargo run -p nexus-launcher -- --check
       - run: cargo build --workspace --release
+      - run: ./scripts/package-linux.sh
+      - name: Test Linux package
+        run: |
+          stage=$(mktemp -d)
+          tar -xzf dist/nexus-launcher-linux-x86_64.tar.gz -C "$stage"
+          (cd / && "$stage/nexus-launcher-linux-x86_64/nexus-launcher" --check)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexus-launcher-linux-package
+          path: dist/nexus-launcher-linux-x86_64.tar.gz
+          if-no-files-found: error
 
   windows:
     name: windows
