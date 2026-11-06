@@ -12,7 +12,7 @@ Steve can run one Nexus Launcher, sign in as an admin, and from that window:
 
 Other people sign in with GitHub. The broker returns only the apps they may see. A private build is downloaded through the broker. The person does not need access to the private source repository.
 
-The local file `catalog/apps.toml` still works with no broker configured. Nothing scans a GitHub org or imports website repositories or WordPress plugins. If an app is not an explicit catalog row, it is not a desktop app.
+The local file `catalog/apps.toml` still works with no broker configured. When a broker is configured, its catalog is authoritative: local seed rows do not override central edits, and unpublishing removes the card on the next catalog refresh. Anonymous users receive the published public catalog. Nothing scans a GitHub org or imports website repositories or WordPress plugins. If an app is not an explicit catalog row, it is not a desktop app.
 
 ## Module map
 

@@ -56,14 +56,7 @@ struct NexusApp {
 struct Card {
     entry: AppEntry,
     phase: Phase,
-    origin: CardOrigin,
     private_download: bool,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CardOrigin {
-    Local,
-    Central,
 }
 
 enum Phase {
@@ -250,16 +243,17 @@ impl NexusApp {
             ),
         };
         app.reload();
-        if app.central.server_url.is_some() {
-            app.send_central(CentralJob::LoadSession {
-                server_url: app.central.server_url.clone().unwrap_or_default(),
-            });
-        }
         app
     }
 
     fn reload(&mut self) {
         self.limited_detail = None;
+        if let Some(server_url) = self.central.server_url.clone() {
+            self.catalog_error = None;
+            self.status = "Checking central catalog…".into();
+            self.send_central(CentralJob::LoadSession { server_url });
+            return;
+        }
         match catalog::load_catalog(&self.catalog_path) {
             Ok(catalog) => {
                 self.catalog_error = None;
@@ -606,7 +600,6 @@ impl Card {
         Self {
             entry,
             phase,
-            origin: CardOrigin::Local,
             private_download: false,
         }
     }
@@ -658,6 +651,8 @@ impl eframe::App for NexusApp {
         }
         if self.working() || self.central.next_poll.is_some() {
             ctx.request_repaint_after(Duration::from_millis(80));
+        } else if self.central.server_url.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(250));
         } else if !self.children.is_empty() {
             ctx.request_repaint_after(Duration::from_secs(1));
         }
@@ -1010,8 +1005,15 @@ impl NexusApp {
                     self.central.account = None;
                     self.central.catalog.clear();
                     self.central.admin_open = false;
-                    self.cards.retain(|card| card.origin == CardOrigin::Local);
-                    self.send_central(CentralJob::SignOut { server_url, token });
+                    self.cards.clear();
+                    self.send_central(CentralJob::SignOut {
+                        server_url: server_url.clone(),
+                        token,
+                    });
+                    self.send_central(CentralJob::Catalog {
+                        server_url,
+                        token: None,
+                    });
                 }
                 central_panel::CentralAction::RefreshAdmin => {
                     self.send_central(CentralJob::AdminList {
@@ -1095,6 +1097,12 @@ impl NexusApp {
             CentralEvent::Session(Ok(None)) => {
                 self.central.token = None;
                 self.central.account = None;
+                if let Some(server_url) = self.central.server_url.clone() {
+                    self.send_central(CentralJob::Catalog {
+                        server_url,
+                        token: None,
+                    });
+                }
             }
             CentralEvent::Session(Err(message)) => self.central.message = Some(message),
             CentralEvent::DeviceStarted(Ok(start)) => {
@@ -1189,7 +1197,9 @@ impl NexusApp {
     }
 
     fn merge_central(&mut self, apps: Vec<CatalogApp>) {
-        self.cards.retain(|card| card.origin == CardOrigin::Local);
+        // A configured broker controls the visible catalog, including removals.
+        // Local seed entries must not shadow an admin's publish/unpublish changes.
+        self.cards.clear();
         for app in apps {
             if self.cards.iter().any(|card| card.entry.id == app.id) {
                 continue;
@@ -1218,7 +1228,6 @@ impl NexusApp {
             self.cards.push(Card {
                 entry,
                 phase,
-                origin: CardOrigin::Central,
                 private_download,
             });
         }
@@ -1816,6 +1825,26 @@ mod tests {
             children: Vec::new(),
             central: central_panel::CentralPanel::new(None),
         }
+    }
+
+    #[test]
+    fn central_catalog_replaces_local_entries_and_respects_unpublish() {
+        let mut app = app();
+        let catalog = catalog::parse_catalog("[[app]]\nid = 'tool'\nname = 'Local Tool'").unwrap();
+        app.cards.push(Card::from_entry(catalog.apps[0].clone()));
+        app.merge_central(vec![CatalogApp {
+            id: "tool".into(),
+            name: "Central Tool".into(),
+            summary: String::new(),
+            category: None,
+            homepage: None,
+            repo: None,
+            visibility: Visibility::Public,
+        }]);
+        assert_eq!(app.cards.len(), 1);
+        assert_eq!(app.cards[0].entry.name, "Central Tool");
+        app.merge_central(Vec::new());
+        assert!(app.cards.is_empty());
     }
 
     #[test]
