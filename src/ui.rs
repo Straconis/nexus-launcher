@@ -9,10 +9,15 @@ use std::time::Duration;
 use eframe::egui::{self, Color32, CornerRadius, Frame, RichText, Stroke, Vec2};
 
 use crate::catalog::{self, AppEntry, Availability};
+use crate::central::{self, CentralClient};
 use crate::github::{self, FetchOutcome, RateSnapshot, SelectedAsset};
 use crate::install::{self, InstallRequest, InstallState};
 use crate::model::PackageKind;
 use crate::theme::{self, ACCENT, BG, BORDER, MUTED, PANEL, TEXT};
+use nexus_protocol::{CatalogApp, ReleaseMeta, Visibility};
+
+#[path = "central_panel.rs"]
+mod central_panel;
 
 pub fn run(catalog_path: PathBuf) -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -45,11 +50,20 @@ struct NexusApp {
     confirm: Option<PendingInstall>,
     dialog_error: Option<String>,
     children: Vec<Child>,
+    central: central_panel::CentralPanel,
 }
 
 struct Card {
     entry: AppEntry,
     phase: Phase,
+    origin: CardOrigin,
+    private_download: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CardOrigin {
+    Local,
+    Central,
 }
 
 enum Phase {
@@ -86,6 +100,75 @@ struct FetchTarget {
 enum Job {
     Fetch(Vec<FetchTarget>),
     Install(InstallRequest),
+    Central(CentralJob),
+}
+
+enum CentralJob {
+    LoadSession {
+        server_url: String,
+    },
+    StartLogin {
+        server_url: String,
+    },
+    Poll {
+        server_url: String,
+        poll_id: String,
+    },
+    SignOut {
+        server_url: String,
+        token: String,
+    },
+    Catalog {
+        server_url: String,
+        token: Option<String>,
+    },
+    AdminList {
+        server_url: String,
+        token: String,
+    },
+    SaveApp {
+        server_url: String,
+        token: String,
+        app: nexus_protocol::UpsertApp,
+    },
+    Publish {
+        server_url: String,
+        token: String,
+        id: String,
+        published: bool,
+    },
+    DeleteApp {
+        server_url: String,
+        token: String,
+        id: String,
+    },
+    Grants {
+        server_url: String,
+        token: String,
+        id: String,
+    },
+    Grant {
+        server_url: String,
+        token: String,
+        id: String,
+        login: String,
+    },
+    Revoke {
+        server_url: String,
+        token: String,
+        id: String,
+        github_id: u64,
+    },
+    Release {
+        server_url: String,
+        token: String,
+        id: String,
+    },
+    InstallPrivate {
+        server_url: String,
+        token: String,
+        id: String,
+    },
 }
 
 enum Event {
@@ -102,6 +185,21 @@ enum Event {
     Installed {
         id: String,
         result: Result<(), String>,
+    },
+    Central(CentralEvent),
+}
+
+enum CentralEvent {
+    Session(Result<Option<(String, nexus_protocol::Account, Vec<CatalogApp>)>, String>),
+    DeviceStarted(Result<nexus_protocol::DeviceStart, String>),
+    Polled(Result<nexus_protocol::DevicePoll, String>),
+    Catalog(Result<Vec<CatalogApp>, String>),
+    Admin(Result<Vec<nexus_protocol::AdminApp>, String>),
+    Grants(Result<Vec<nexus_protocol::Grant>, String>),
+    Note(Result<String, String>),
+    PrivateRelease {
+        id: String,
+        result: Result<ReleaseMeta, String>,
     },
 }
 
@@ -145,8 +243,18 @@ impl NexusApp {
             confirm: None,
             dialog_error: None,
             children: Vec::new(),
+            central: central_panel::CentralPanel::new(
+                central::config_path()
+                    .and_then(|path| central::load_config(&path).ok().flatten())
+                    .map(|config| config.server_url),
+            ),
         };
         app.reload();
+        if app.central.server_url.is_some() {
+            app.send_central(CentralJob::LoadSession {
+                server_url: app.central.server_url.clone().unwrap_or_default(),
+            });
+        }
         app
     }
 
@@ -170,7 +278,10 @@ impl NexusApp {
             .iter()
             .filter_map(|card| {
                 let repo = card.entry.repo.clone()?;
-                if matches!(card.phase, Phase::Loading) {
+                if matches!(card.phase, Phase::Loading)
+                    && !card.private_download
+                    && card.entry.repo.is_some()
+                {
                     Some(FetchTarget {
                         id: card.entry.id.clone(),
                         repo,
@@ -215,6 +326,7 @@ impl NexusApp {
                 }
                 self.status = format!("{id}: working");
             }
+            Event::Central(event) => self.apply_central(event),
             Event::Installed { id, result } => {
                 let state = self.install_state(&id);
                 if let Some(live) = self.live_mut(&id) {
@@ -361,6 +473,28 @@ impl NexusApp {
         if live.busy.is_some() {
             return;
         }
+        if card.private_download {
+            let Some(server_url) = self.central.server_url.clone() else {
+                self.dialog_error = Some("Central catalog is not configured.".into());
+                return;
+            };
+            let Some(token) = self.central.token.clone() else {
+                self.dialog_error = Some("Sign in to download this app.".into());
+                return;
+            };
+            if let Some(live) = self.live_mut(id) {
+                live.busy = Some(Busy {
+                    message: "Starting download".into(),
+                    fraction: Some(0.0),
+                });
+            }
+            self.send_central(CentralJob::InstallPrivate {
+                server_url,
+                token,
+                id: id.to_string(),
+            });
+            return;
+        }
         let Some(asset) = live.asset.clone() else {
             return;
         };
@@ -469,7 +603,12 @@ impl Card {
             Availability::NotOnPlatform => Phase::NotOnPlatform,
             Availability::Fetch => Phase::Loading,
         };
-        Self { entry, phase }
+        Self {
+            entry,
+            phase,
+            origin: CardOrigin::Local,
+            private_download: false,
+        }
     }
 
     fn is_busy(&self) -> bool {
@@ -496,8 +635,19 @@ impl eframe::App for NexusApp {
         egui::CentralPanel::default()
             .frame(Frame::new().fill(BG).inner_margin(20))
             .show(ctx, |ui| {
+                if self.central.take_poll() {
+                    if let (Some(server_url), Some(poll_id)) =
+                        (self.central.server_url.clone(), self.central.poll_id())
+                    {
+                        self.send_central(CentralJob::Poll {
+                            server_url,
+                            poll_id,
+                        });
+                    }
+                }
                 ui.add_enabled_ui(!modal_open, |ui| {
                     actions.extend(self.header(ui));
+                    actions.extend(self.central_actions(ui));
                     actions.extend(self.banners(ui));
                     actions.extend(self.grid(ui));
                 });
@@ -506,7 +656,7 @@ impl eframe::App for NexusApp {
         for action in actions {
             self.handle(action);
         }
-        if self.working() {
+        if self.working() || self.central.next_poll.is_some() {
             ctx.request_repaint_after(Duration::from_millis(80));
         } else if !self.children.is_empty() {
             ctx.request_repaint_after(Duration::from_secs(1));
@@ -836,6 +986,299 @@ impl NexusApp {
         actions
     }
 
+    fn send_central(&self, job: CentralJob) {
+        if self.jobs.send(Job::Central(job)).is_err() {
+            // The dialog is set by the caller when it has `&mut self`.
+        }
+    }
+
+    fn central_actions(&mut self, ui: &mut egui::Ui) -> Vec<UiAction> {
+        let server_url = self.central.server_url.clone();
+        let token = self.central.token.clone();
+        for action in self.central.show(ui) {
+            let Some(server_url) = server_url.clone() else {
+                continue;
+            };
+            let authed = |token: &Option<String>| token.clone().unwrap_or_default();
+            match action {
+                central_panel::CentralAction::StartLogin => {
+                    self.send_central(CentralJob::StartLogin { server_url });
+                }
+                central_panel::CentralAction::SignOut => {
+                    let token = authed(&token);
+                    self.central.token = None;
+                    self.central.account = None;
+                    self.central.catalog.clear();
+                    self.central.admin_open = false;
+                    self.cards.retain(|card| card.origin == CardOrigin::Local);
+                    self.send_central(CentralJob::SignOut { server_url, token });
+                }
+                central_panel::CentralAction::RefreshAdmin => {
+                    self.send_central(CentralJob::AdminList {
+                        server_url,
+                        token: authed(&token),
+                    });
+                }
+                central_panel::CentralAction::SaveApp => {
+                    let app = nexus_protocol::UpsertApp {
+                        id: self.central.draft_id.clone(),
+                        name: self.central.draft_name.clone(),
+                        summary: self.central.draft_summary.clone(),
+                        category: None,
+                        homepage: None,
+                        repo: Some(self.central.draft_repo.clone()),
+                        visibility: if self.central.draft_private {
+                            Visibility::Private
+                        } else {
+                            Visibility::Public
+                        },
+                        published: false,
+                    };
+                    self.send_central(CentralJob::SaveApp {
+                        server_url,
+                        token: authed(&token),
+                        app,
+                    });
+                }
+                central_panel::CentralAction::TogglePublished { id, published } => {
+                    self.send_central(CentralJob::Publish {
+                        server_url,
+                        token: authed(&token),
+                        id,
+                        published,
+                    });
+                }
+                central_panel::CentralAction::DeleteApp { id } => {
+                    self.send_central(CentralJob::DeleteApp {
+                        server_url,
+                        token: authed(&token),
+                        id,
+                    });
+                }
+                central_panel::CentralAction::Grant { id, login } => {
+                    if login.trim().is_empty() {
+                        self.send_central(CentralJob::Grants {
+                            server_url,
+                            token: authed(&token),
+                            id,
+                        });
+                    } else {
+                        self.send_central(CentralJob::Grant {
+                            server_url,
+                            token: authed(&token),
+                            id,
+                            login,
+                        });
+                    }
+                }
+                central_panel::CentralAction::Revoke { id, github_id } => {
+                    self.send_central(CentralJob::Revoke {
+                        server_url,
+                        token: authed(&token),
+                        id,
+                        github_id,
+                    });
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    fn apply_central(&mut self, event: CentralEvent) {
+        match event {
+            CentralEvent::Session(Ok(Some((token, account, catalog)))) => {
+                self.central.token = Some(token);
+                self.central.account = Some(account);
+                self.central.catalog = catalog.clone();
+                self.merge_central(catalog);
+            }
+            CentralEvent::Session(Ok(None)) => {
+                self.central.token = None;
+                self.central.account = None;
+            }
+            CentralEvent::Session(Err(message)) => self.central.message = Some(message),
+            CentralEvent::DeviceStarted(Ok(start)) => {
+                self.central.poll_id = Some(start.poll_id);
+                self.central.user_code = Some(start.user_code);
+                self.central.open_url = Some(start.verification_uri_complete.clone());
+                self.central.waiting = true;
+                self.central.message = Some(format!(
+                    "GitHub code {}. Finish it in the browser.",
+                    self.central.user_code.as_deref().unwrap_or("")
+                ));
+                let _ = open::that(&start.verification_uri_complete);
+                self.central.schedule_poll(start.interval_seconds);
+            }
+            CentralEvent::DeviceStarted(Err(message)) => {
+                self.central.waiting = false;
+                self.central.message = Some(message);
+            }
+            CentralEvent::Polled(Ok(nexus_protocol::DevicePoll::Pending { interval_seconds }))
+            | CentralEvent::Polled(Ok(nexus_protocol::DevicePoll::SlowDown { interval_seconds })) =>
+            {
+                self.central.schedule_poll(interval_seconds);
+            }
+            CentralEvent::Polled(Ok(nexus_protocol::DevicePoll::Approved {
+                session_token,
+                account,
+            })) => {
+                self.central.token = Some(session_token);
+                self.central.account = Some(account);
+                self.central.waiting = false;
+                self.central.poll_id = None;
+                self.central.user_code = None;
+                self.central.next_poll = None;
+                self.central.message = Some("Signed in.".into());
+                if let Some(server_url) = self.central.server_url.clone() {
+                    self.send_central(CentralJob::Catalog {
+                        server_url,
+                        token: self.central.token.clone(),
+                    });
+                }
+            }
+            CentralEvent::Polled(Ok(nexus_protocol::DevicePoll::Denied)) => {
+                self.central.waiting = false;
+                self.central.next_poll = None;
+                self.central.message = Some("GitHub denied the login.".into());
+            }
+            CentralEvent::Polled(Ok(nexus_protocol::DevicePoll::Expired)) => {
+                self.central.waiting = false;
+                self.central.next_poll = None;
+                self.central.message = Some("The login code expired. Sign in again.".into());
+            }
+            CentralEvent::Polled(Err(message)) => {
+                self.central.waiting = false;
+                self.central.message = Some(message);
+            }
+            CentralEvent::Catalog(Ok(apps)) => {
+                self.central.catalog = apps.clone();
+                self.merge_central(apps);
+            }
+            CentralEvent::Catalog(Err(message)) => self.central.message = Some(message),
+            CentralEvent::Admin(Ok(apps)) => self.central.admin_apps = apps,
+            CentralEvent::Admin(Err(message)) => self.central.message = Some(message),
+            CentralEvent::Grants(Ok(grants)) => self.central.grants = grants,
+            CentralEvent::Grants(Err(message)) => self.central.message = Some(message),
+            CentralEvent::Note(Ok(message)) => {
+                self.central.message = Some(message);
+                if self.central.account.is_some() {
+                    if let Some(server_url) = self.central.server_url.clone() {
+                        let token = self.central.token.clone().unwrap_or_default();
+                        self.send_central(CentralJob::AdminList {
+                            server_url: server_url.clone(),
+                            token: token.clone(),
+                        });
+                        self.send_central(CentralJob::Catalog {
+                            server_url,
+                            token: self.central.token.clone(),
+                        });
+                        if !self.central.selected.is_empty() {
+                            let id = self.central.selected.clone();
+                            self.send_central(CentralJob::Grants {
+                                server_url: self.central.server_url.clone().unwrap_or_default(),
+                                token,
+                                id,
+                            });
+                        }
+                    }
+                }
+            }
+            CentralEvent::Note(Err(message)) => self.central.message = Some(message),
+            CentralEvent::PrivateRelease { id, result } => self.apply_private_release(id, result),
+        }
+    }
+
+    fn merge_central(&mut self, apps: Vec<CatalogApp>) {
+        self.cards.retain(|card| card.origin == CardOrigin::Local);
+        for app in apps {
+            if self.cards.iter().any(|card| card.entry.id == app.id) {
+                continue;
+            }
+            let private_download = app.visibility == Visibility::Private;
+            let entry = AppEntry {
+                id: app.id,
+                name: app.name,
+                summary: app.summary,
+                repo: if private_download { None } else { app.repo },
+                homepage: app.homepage,
+                category: app.category,
+                executable: None,
+                asset_preference: Vec::new(),
+                platforms: Vec::new(),
+            };
+            let phase = if private_download {
+                Phase::Loading
+            } else {
+                match catalog::availability(&entry, catalog::current_platform()) {
+                    Availability::ComingSoon => Phase::ComingSoon,
+                    Availability::NotOnPlatform => Phase::NotOnPlatform,
+                    Availability::Fetch => Phase::Loading,
+                }
+            };
+            self.cards.push(Card {
+                entry,
+                phase,
+                origin: CardOrigin::Central,
+                private_download,
+            });
+        }
+        self.queue_fetches();
+        self.queue_private();
+    }
+
+    fn queue_private(&mut self) {
+        let Some(server_url) = self.central.server_url.clone() else {
+            return;
+        };
+        let Some(token) = self.central.token.clone() else {
+            return;
+        };
+        let ids: Vec<String> = self
+            .cards
+            .iter()
+            .filter(|card| card.private_download && matches!(card.phase, Phase::Loading))
+            .map(|card| card.entry.id.clone())
+            .collect();
+        for id in ids {
+            self.send_central(CentralJob::Release {
+                server_url: server_url.clone(),
+                token: token.clone(),
+                id,
+            });
+        }
+    }
+
+    fn apply_private_release(&mut self, id: String, result: Result<ReleaseMeta, String>) {
+        let install = self.install_state(&id);
+        let Some(card) = self.cards.iter_mut().find(|card| card.entry.id == id) else {
+            return;
+        };
+        card.phase = match result {
+            Err(message) => Phase::Failed(message),
+            Ok(meta) => {
+                let kind = match meta.kind.as_str() {
+                    "archive" => PackageKind::Archive,
+                    "handoff" => PackageKind::Handoff,
+                    _ => PackageKind::Portable,
+                };
+                Phase::Live(Box::new(Live {
+                    tag: meta.tag,
+                    html_url: String::new(),
+                    asset: Some(SelectedAsset {
+                        name: meta.asset_name,
+                        url: String::new(),
+                        size: meta.size,
+                        kind,
+                        digest: Some(format!("sha256:{}", meta.sha256)),
+                        checksum_asset: None,
+                    }),
+                    install,
+                    busy: None,
+                }))
+            }
+        };
+    }
+
     fn footer(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             brand_link(
@@ -1087,6 +1530,7 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
         match job {
             Job::Fetch(targets) => fetch_all(&client, &targets, &events),
             Job::Install(request) => install_job(&client, request, &events),
+            Job::Central(job) => central_job(job, &events),
         }
     }
 }
@@ -1107,7 +1551,193 @@ fn report_client_failure(events: &Sender<Event>, job: Job, message: &str) {
                 result: Err(message.to_string()),
             });
         }
+        Job::Central(_) => {
+            let _ = events.send(Event::Central(CentralEvent::Note(Err(message.to_string()))));
+        }
     }
+}
+
+fn central_job(job: CentralJob, events: &Sender<Event>) {
+    let event = match job {
+        CentralJob::LoadSession { server_url } => {
+            CentralEvent::Session(load_central_session(&server_url))
+        }
+        CentralJob::StartLogin { server_url } => {
+            CentralEvent::DeviceStarted(start_login(&server_url))
+        }
+        CentralJob::Poll {
+            server_url,
+            poll_id,
+        } => CentralEvent::Polled(poll_login(&server_url, &poll_id)),
+        CentralJob::SignOut { server_url, token } => {
+            if let Ok(client) = CentralClient::new(&server_url, Some(token)) {
+                let _ = client.logout();
+            }
+            central::clear_session();
+            CentralEvent::Note(Ok("Signed out. Installed copies stay on disk.".into()))
+        }
+        CentralJob::Catalog { server_url, token } => {
+            CentralEvent::Catalog(central_call(&server_url, token, |client| client.catalog()))
+        }
+        CentralJob::AdminList { server_url, token } => {
+            CentralEvent::Admin(central_call(&server_url, Some(token), |client| {
+                client.admin_apps()
+            }))
+        }
+        CentralJob::SaveApp {
+            server_url,
+            token,
+            app,
+        } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
+            client.upsert_app(&app).map(|_| "Saved the app.".into())
+        })),
+        CentralJob::Publish {
+            server_url,
+            token,
+            id,
+            published,
+        } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
+            client.set_published(&id, published)?;
+            Ok("Updated publishing.".into())
+        })),
+        CentralJob::DeleteApp {
+            server_url,
+            token,
+            id,
+        } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
+            client.delete_app(&id)?;
+            Ok("Removed the app.".into())
+        })),
+        CentralJob::Grants {
+            server_url,
+            token,
+            id,
+        } => CentralEvent::Grants(central_call(&server_url, Some(token), |client| {
+            client.grants(&id)
+        })),
+        CentralJob::Grant {
+            server_url,
+            token,
+            id,
+            login,
+        } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
+            let grant = client.grant(&id, &login)?;
+            Ok(format!("Granted {} ({}).", grant.login, grant.github_id))
+        })),
+        CentralJob::Revoke {
+            server_url,
+            token,
+            id,
+            github_id,
+        } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
+            client.revoke(&id, github_id)?;
+            Ok("Revoked the grant. Copies already downloaded stay installed.".into())
+        })),
+        CentralJob::Release {
+            server_url,
+            token,
+            id,
+        } => {
+            let os = catalog::current_platform().label();
+            let arch = catalog::current_arch();
+            CentralEvent::PrivateRelease {
+                id: id.clone(),
+                result: central_call(&server_url, Some(token), |client| {
+                    client.release(&id, os, arch)
+                }),
+            }
+        }
+        CentralJob::InstallPrivate {
+            server_url,
+            token,
+            id,
+        } => {
+            let _ = events.send(Event::Progress {
+                id: id.clone(),
+                message: "Downloading from the broker".into(),
+                fraction: Some(0.2),
+            });
+            let result = install_private(&server_url, &token, &id);
+            let _ = events.send(Event::Installed {
+                id,
+                result: result.map(|_| ()),
+            });
+            return;
+        }
+    };
+    let _ = events.send(Event::Central(event));
+}
+
+fn load_central_session(
+    server_url: &str,
+) -> Result<Option<(String, nexus_protocol::Account, Vec<CatalogApp>)>, String> {
+    let Some(token) = central::load_session() else {
+        return Ok(None);
+    };
+    let client = CentralClient::new(server_url, Some(token.clone()))?;
+    match client.account() {
+        Ok(account) => {
+            let catalog = client.catalog().unwrap_or_default();
+            Ok(Some((token, account, catalog)))
+        }
+        Err(err) if err.contains("sign in") || err.contains("401") => {
+            central::clear_session();
+            Ok(None)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn start_login(server_url: &str) -> Result<nexus_protocol::DeviceStart, String> {
+    CentralClient::new(server_url, None)?.start_device()
+}
+
+fn poll_login(server_url: &str, poll_id: &str) -> Result<nexus_protocol::DevicePoll, String> {
+    let poll = CentralClient::new(server_url, None)?.poll_device(poll_id)?;
+    if let nexus_protocol::DevicePoll::Approved { session_token, .. } = &poll {
+        central::save_session(session_token)?;
+    }
+    Ok(poll)
+}
+
+fn central_call<T>(
+    server_url: &str,
+    token: Option<String>,
+    call: impl FnOnce(&CentralClient) -> Result<T, String>,
+) -> Result<T, String> {
+    let client = CentralClient::new(server_url, token)?;
+    call(&client)
+}
+
+fn install_private(server_url: &str, token: &str, id: &str) -> Result<(), String> {
+    let client = CentralClient::new(server_url, Some(token.to_string()))?;
+    let os = catalog::current_platform().label();
+    let arch = catalog::current_arch();
+    let dir = std::env::temp_dir().join(format!("nexus-central-{id}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let dest = dir.join("download");
+    let meta = client.download_verified(id, os, arch, &dest)?;
+    let kind = match meta.kind.as_str() {
+        "archive" => PackageKind::Archive,
+        "handoff" => PackageKind::Handoff,
+        _ => PackageKind::Portable,
+    };
+    let root = install::default_data_root().map_err(|err| err.to_string())?;
+    install::install_verified_file(
+        &root,
+        id,
+        &meta.tag,
+        &meta.asset_name,
+        kind,
+        None,
+        &dest,
+        &meta.sha256,
+        |_, _| {},
+    )
+    .map_err(|err| err.to_string())?;
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
 }
 
 fn fetch_all(client: &reqwest::blocking::Client, targets: &[FetchTarget], events: &Sender<Event>) {
@@ -1184,6 +1814,7 @@ mod tests {
             confirm: None,
             dialog_error: None,
             children: Vec::new(),
+            central: central_panel::CentralPanel::new(None),
         }
     }
 

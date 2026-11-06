@@ -206,7 +206,90 @@ where
         verify_sha256(&archive_path, expected)?;
     }
 
-    let relative_launch = match request.kind {
+    finalize_incoming(
+        app_dir,
+        incoming,
+        safe_name,
+        &request.app_id,
+        &request.version,
+        request.kind,
+        request.executable_hint.as_deref(),
+        sha,
+        progress,
+        swapped,
+    )
+}
+
+/// Install a file the caller already downloaded and checksum-verified.
+///
+/// Used for central private builds. The URL is not fetched again, and this
+/// does not delete copies that are already installed when a grant is revoked.
+#[allow(clippy::too_many_arguments)]
+pub fn install_verified_file<F>(
+    root: &Path,
+    app_id: &str,
+    version: &str,
+    asset_name: &str,
+    kind: PackageKind,
+    executable_hint: Option<&str>,
+    source: &Path,
+    sha256: &str,
+    mut progress: F,
+) -> Result<InstallRecord, InstallError>
+where
+    F: FnMut(&str, Option<f32>),
+{
+    if app_id.contains('/') || app_id.contains('\\') || app_id.contains("..") {
+        return Err(InstallError::Message("invalid app id".into()));
+    }
+    let safe_name = sanitize_filename(asset_name)?;
+    verify_sha256(source, sha256)?;
+    let app_dir = root.join("apps").join(app_id);
+    fs::create_dir_all(&app_dir)?;
+    let incoming = app_dir.join("incoming");
+    if incoming.exists() {
+        fs::remove_dir_all(&incoming)?;
+    }
+    fs::create_dir_all(&incoming)?;
+    let archive_path = incoming.join(&safe_name);
+    fs::copy(source, &archive_path)?;
+    let mut swapped = false;
+    let result = finalize_incoming(
+        &app_dir,
+        &incoming,
+        &safe_name,
+        app_id,
+        version,
+        kind,
+        executable_hint,
+        Some(sha256.to_string()),
+        &mut progress,
+        &mut swapped,
+    );
+    if result.is_err() && !swapped && incoming.exists() {
+        let _ = fs::remove_dir_all(&incoming);
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finalize_incoming<F>(
+    app_dir: &Path,
+    incoming: &Path,
+    safe_name: &str,
+    app_id: &str,
+    version: &str,
+    kind: PackageKind,
+    executable_hint: Option<&str>,
+    sha: Option<String>,
+    progress: &mut F,
+    swapped: &mut bool,
+) -> Result<InstallRecord, InstallError>
+where
+    F: FnMut(&str, Option<f32>),
+{
+    let archive_path = incoming.join(safe_name);
+    let relative_launch = match kind {
         PackageKind::Portable => {
             make_executable(&archive_path)?;
             Some(PathBuf::from(safe_name))
@@ -215,11 +298,7 @@ where
             progress("Extracting", Some(0.92));
             let payload = incoming.join("payload");
             extract_archive(&archive_path, &payload)?;
-            let launch = find_launchable(
-                &payload,
-                request.executable_hint.as_deref(),
-                &request.app_id,
-            )?;
+            let launch = find_launchable(&payload, executable_hint, app_id)?;
             make_executable(&launch)?;
             let relative = launch
                 .strip_prefix(&payload)
@@ -235,18 +314,18 @@ where
     *swapped = true;
     let current = app_dir.join("current");
     let launch_path = relative_launch.map(|relative| current.join(relative));
-    let installer_path = if request.kind == PackageKind::Handoff {
+    let installer_path = if kind == PackageKind::Handoff {
         Some(current.join(safe_name))
     } else {
         None
     };
     let record = InstallRecord {
         schema: RECORD_SCHEMA,
-        app_id: request.app_id.clone(),
-        version: request.version.clone(),
+        app_id: app_id.to_string(),
+        version: version.to_string(),
         asset_name: safe_name.to_string(),
         sha256: sha,
-        kind: request.kind,
+        kind,
         install_dir: app_dir.to_path_buf(),
         launch_path,
         installer_path: installer_path.clone(),
