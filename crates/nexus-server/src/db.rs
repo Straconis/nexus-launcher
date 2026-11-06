@@ -121,6 +121,15 @@ impl Database {
                 .map_err(|err| err.to_string())?;
             }
         }
+        let has_project_types: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_types')", [], |row| row.get(0)).map_err(|err| err.to_string())?;
+        if !has_project_types {
+            conn.execute_batch("CREATE TABLE project_types(name TEXT PRIMARY KEY);")
+                .map_err(|err| err.to_string())?;
+            for name in ["Twitch stream", "Podcast", "Community"] {
+                conn.execute("INSERT INTO project_types(name) VALUES (?)", [name])
+                    .map_err(|err| err.to_string())?;
+            }
+        }
         #[cfg(unix)]
         tighten_db_file(path);
         Ok(Self {
@@ -423,7 +432,7 @@ impl Database {
     pub fn categories(&self) -> Result<Vec<String>, ApiFailure> {
         let conn = self.lock()?;
         conn.execute_batch("CREATE TABLE IF NOT EXISTS categories (name TEXT PRIMARY KEY);")?;
-        let mut stmt = conn.prepare("SELECT name FROM categories UNION SELECT category FROM apps WHERE category IS NOT NULL AND trim(category) != '' ORDER BY 1 COLLATE NOCASE")?;
+        let mut stmt = conn.prepare("SELECT name FROM categories UNION SELECT category FROM apps WHERE kind='app' AND category IS NOT NULL AND trim(category) != '' ORDER BY 1 COLLATE NOCASE")?;
         let rows = stmt
             .query_map([], |row| row.get(0))?
             .collect::<Result<Vec<String>, _>>()?;
@@ -464,7 +473,7 @@ impl Database {
             }
             if !name.is_empty() && name != new_name {
                 let children = {
-                    let mut stmt = tx.prepare("SELECT name FROM categories WHERE substr(name,1,?)=? UNION SELECT category FROM apps WHERE substr(category,1,?)=?")?;
+                    let mut stmt = tx.prepare("SELECT name FROM categories WHERE substr(name,1,?)=? UNION SELECT category FROM apps WHERE kind='app' AND substr(category,1,?)=?")?;
                     let mut rows = stmt.query(params![
                         prefix.chars().count(),
                         prefix,
@@ -485,16 +494,16 @@ impl Database {
                     )?;
                     tx.execute("DELETE FROM categories WHERE name=?", [&child])?;
                 }
-                tx.execute("UPDATE apps SET category = ? || substr(category,?) WHERE substr(category,1,?)=?", params![new_name,name.chars().count()+1,prefix.chars().count(),prefix])?;
+                tx.execute("UPDATE apps SET category = ? || substr(category,?) WHERE kind='app' AND substr(category,1,?)=?", params![new_name,name.chars().count()+1,prefix.chars().count(),prefix])?;
                 tx.execute(
-                    "UPDATE apps SET category=? WHERE category=?",
+                    "UPDATE apps SET category=? WHERE kind='app' AND category=?",
                     params![new_name, name],
                 )?;
                 tx.execute("DELETE FROM categories WHERE name=?", [name])?;
             }
         } else {
             tx.execute(
-                "UPDATE apps SET category=NULL WHERE category=? OR substr(category,1,?)=?",
+                "UPDATE apps SET category=NULL WHERE kind='app' AND (category=? OR substr(category,1,?)=?)",
                 params![name, prefix.chars().count(), prefix],
             )?;
             tx.execute(
@@ -537,6 +546,44 @@ impl Database {
                 [&change.id],
             )?;
             tx.execute("DELETE FROM status_stamps WHERE id=?", [&change.id])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+impl Database {
+    pub fn project_types(&self) -> Result<Vec<String>, ApiFailure> {
+        let conn = self.lock()?;
+        let mut stmt =
+            conn.prepare("SELECT name FROM project_types ORDER BY name COLLATE NOCASE")?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn change_project_type(
+        &self,
+        name: &str,
+        replacement: Option<&str>,
+    ) -> Result<(), ApiFailure> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        if let Some(new_name) = replacement {
+            tx.execute(
+                "INSERT OR IGNORE INTO project_types(name) VALUES (?)",
+                [new_name],
+            )?;
+        }
+        if !name.is_empty() {
+            tx.execute(
+                "UPDATE apps SET category=? WHERE kind='supported' AND category=?",
+                params![replacement, name],
+            )?;
+            if replacement != Some(name) {
+                tx.execute("DELETE FROM project_types WHERE name=?", [name])?;
+            }
         }
         tx.commit()?;
         Ok(())

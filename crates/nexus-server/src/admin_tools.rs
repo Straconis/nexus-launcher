@@ -182,6 +182,34 @@ pub async fn change_status_stamp(
     Ok(Json(state.db.status_stamps()?))
 }
 
+pub async fn project_types(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<String>>, ApiFailure> {
+    require_admin(&state, &headers)?;
+    Ok(Json(state.db.project_types()?))
+}
+
+pub async fn change_project_type(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CategoryChange>,
+) -> Result<Json<Vec<String>>, ApiFailure> {
+    require_admin(&state, &headers)?;
+    let name = body.name.trim();
+    let replacement = body.replacement.as_deref().map(str::trim);
+    if name.len() > 60
+        || name.chars().any(char::is_control)
+        || replacement
+            .is_some_and(|v| v.is_empty() || v.len() > 60 || v.chars().any(char::is_control))
+        || (name.is_empty() && replacement.is_none())
+    {
+        return Err(invalid("project types must be 1 to 60 characters"));
+    }
+    state.db.change_project_type(name, replacement)?;
+    Ok(Json(state.db.project_types()?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

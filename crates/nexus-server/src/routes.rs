@@ -31,6 +31,10 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
         .route(
+            "/v1/admin/project-types",
+            get(crate::admin_tools::project_types).post(crate::admin_tools::change_project_type),
+        )
+        .route(
             "/v1/admin/status-stamps",
             get(crate::admin_tools::status_stamps).post(crate::admin_tools::change_status_stamp),
         )
@@ -231,6 +235,18 @@ async fn admin_upsert(
             StatusCode::BAD_REQUEST,
             "invalid_status",
             "choose a configured status stamp",
+        ));
+    }
+    if app.kind == "supported"
+        && app
+            .category
+            .as_ref()
+            .is_some_and(|kind| !state.db.project_types().unwrap_or_default().contains(kind))
+    {
+        return Err(ApiFailure::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_project_type",
+            "choose a configured supported-project type",
         ));
     }
     state.db.upsert_app(&app, &auth::stamp(auth::now()))?;

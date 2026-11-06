@@ -14,6 +14,7 @@ pub enum CentralAction {
     SignOut,
     RefreshAdmin,
     SaveApp,
+    ChangeProjectType(nexus_protocol::CategoryChange),
     SetProjectStatus { id: String, status: Option<String> },
     ChangeStatusStamp(nexus_protocol::StatusStampChange),
     ChangeCategory(nexus_protocol::CategoryChange),
@@ -47,6 +48,10 @@ pub struct CentralPanel {
     status_selected: String,
     status_name: String,
     status_color: egui::Color32,
+    pub project_types: Vec<String>,
+    project_type_open: bool,
+    project_type_selected: String,
+    project_type_name: String,
     pub categories: Vec<String>,
     pub summary_preview: Option<nexus_protocol::RepoPreview>,
     category_open: bool,
@@ -92,6 +97,10 @@ impl CentralPanel {
             status_selected: String::new(),
             status_name: String::new(),
             status_color: ACCENT,
+            project_types: Vec::new(),
+            project_type_open: false,
+            project_type_selected: String::new(),
+            project_type_name: String::new(),
             categories: Vec::new(),
             summary_preview: None,
             category_open: false,
@@ -218,6 +227,34 @@ impl CentralPanel {
             });
             self.status_open = open;
         }
+        if self.project_type_open {
+            let mut open = self.project_type_open;
+            egui::Window::new("MANAGE SUPPORTED PROJECT TYPES").open(&mut open).default_width(430.0).vscroll(true).show(ui.ctx(), |ui| {
+                ui.label("These types apply only to supported projects, independently of software and hardware categories. Renaming updates assigned project cards; removal clears their type.");
+                for name in &self.project_types {
+                    if ui.selectable_label(&self.project_type_selected == name, name).clicked() {
+                        self.project_type_selected = name.clone(); self.project_type_name = name.clone();
+                    }
+                }
+                ui.add(egui::TextEdit::singleline(&mut self.project_type_name).hint_text("Project type, e.g. Podcast"));
+                ui.horizontal_wrapped(|ui| {
+                    if ui.add_enabled(!self.project_type_name.trim().is_empty(), egui::Button::new("ADD TYPE")).clicked() {
+                        actions.push(CentralAction::ChangeProjectType(nexus_protocol::CategoryChange { name: String::new(), replacement: Some(self.project_type_name.trim().into()) }));
+                    }
+                    if ui.add_enabled(!self.project_type_selected.is_empty() && !self.project_type_name.trim().is_empty(), egui::Button::new("RENAME SELECTED")).clicked() {
+                        if self.manage_supported && self.draft_category == self.project_type_selected { self.draft_category = self.project_type_name.trim().into(); }
+                        actions.push(CentralAction::ChangeProjectType(nexus_protocol::CategoryChange { name: self.project_type_selected.clone(), replacement: Some(self.project_type_name.trim().into()) }));
+                        self.project_type_selected = self.project_type_name.trim().into();
+                    }
+                    if ui.add_enabled(!self.project_type_selected.is_empty(), egui::Button::new("REMOVE SELECTED")).clicked() {
+                        actions.push(CentralAction::ChangeProjectType(nexus_protocol::CategoryChange { name: self.project_type_selected.clone(), replacement: None }));
+                        self.project_type_selected.clear();
+                    }
+                });
+                if let Some(message) = &self.message { ui.label(message); }
+            });
+            self.project_type_open = open;
+        }
         if self.category_open {
             let mut open = self.category_open;
             egui::Window::new("MANAGE CATEGORIES").open(&mut open).default_width(430.0).vscroll(true).show(ui.ctx(), |ui| {
@@ -245,7 +282,7 @@ impl CentralPanel {
                         actions.push(CentralAction::ChangeCategory(nexus_protocol::CategoryChange { name: String::new(), replacement: Some(full_name.clone()) }));
                     }
                     if ui.add_enabled(!self.category_selected.is_empty() && !self.category_name.trim().is_empty(), egui::Button::new("SAVE NAME / PARENT")).clicked() {
-                        if self.draft_category == self.category_selected { self.draft_category = full_name.clone(); }
+                        if !self.manage_supported && self.draft_category == self.category_selected { self.draft_category = full_name.clone(); }
                         actions.push(CentralAction::ChangeCategory(nexus_protocol::CategoryChange { name: self.category_selected.clone(), replacement: Some(full_name.clone()) }));
                         self.category_selected = full_name.clone();
                     }
@@ -309,6 +346,7 @@ impl CentralPanel {
                     self.admin_open = !self.admin_open || self.manage_supported;
                     self.manage_supported = false;
                     self.editor_open = false;
+                    self.project_type_open = false;
                     if self.admin_open {
                         actions.push(CentralAction::RefreshAdmin);
                     }
@@ -317,6 +355,7 @@ impl CentralPanel {
                     self.admin_open = true;
                     self.manage_supported = true;
                     self.editor_open = false;
+                    self.category_open = false;
                     actions.push(CentralAction::RefreshAdmin);
                 }
             });
@@ -390,8 +429,19 @@ impl CentralPanel {
             if ui.button("MANAGE STATUS STAMPS").clicked() {
                 self.status_open = true;
             }
-            if ui.button("MANAGE CATEGORIES").clicked() {
-                self.category_open = true;
+            if ui
+                .button(if self.manage_supported {
+                    "MANAGE PROJECT TYPES"
+                } else {
+                    "MANAGE CATEGORIES"
+                })
+                .clicked()
+            {
+                if self.manage_supported {
+                    self.project_type_open = true;
+                } else {
+                    self.category_open = true;
+                }
             }
             if ui.button("RELOAD LIST").clicked() {
                 actions.push(CentralAction::RefreshAdmin);
@@ -582,7 +632,14 @@ impl CentralPanel {
                 });
             }
             ui.horizontal(|ui| {
-                ui.label(RichText::new("category").color(MUTED));
+                ui.label(
+                    RichText::new(if self.manage_supported {
+                        "Project type"
+                    } else {
+                        "Category"
+                    })
+                    .color(MUTED),
+                );
                 egui::ComboBox::from_id_salt("app-category")
                     .selected_text(if self.draft_category.is_empty() {
                         "Uncategorized".into()
@@ -595,7 +652,11 @@ impl CentralPanel {
                             String::new(),
                             "Uncategorized",
                         );
-                        let mut categories = self.categories.clone();
+                        let mut categories = if self.manage_supported {
+                            self.project_types.clone()
+                        } else {
+                            self.categories.clone()
+                        };
                         if !self.draft_category.is_empty()
                             && !categories.contains(&self.draft_category)
                         {
@@ -609,8 +670,19 @@ impl CentralPanel {
                             );
                         }
                     });
-                if ui.button("EDIT CATEGORIES").clicked() {
-                    self.category_open = true;
+                if ui
+                    .button(if self.manage_supported {
+                        "EDIT PROJECT TYPES"
+                    } else {
+                        "EDIT CATEGORIES"
+                    })
+                    .clicked()
+                {
+                    if self.manage_supported {
+                        self.project_type_open = true;
+                    } else {
+                        self.category_open = true;
+                    }
                 }
             });
             ui.horizontal(|ui| {
@@ -668,6 +740,7 @@ impl CentralPanel {
 }
 
 const HELP_TOPICS: &[(&str, &str)] = &[
+    ("Supported project types", "Supported projects have their own Project type dropdown, such as Twitch stream, Podcast, or Community. MANAGE PROJECT TYPES adds, renames, or removes these shared choices. This list is separate from software and hardware categories. Use only public-approved copy in summaries."),
     ("Update installed apps", "REFRESH checks each repository's latest release. An installed app with a newer compatible release shows UPDATE. Nexus verifies and stages the download, then replaces its managed copy. Installer packages open through the operating system and may need your input. It does not update unrelated system installations or install silently in the background."),
     ("Supported projects", "SUPPORTED PROJECTS shows the projects Straconis Software supports. Admins can use MANAGE SUPPORTED PROJECTS to add and edit a name, summary, and https project link, then show or hide the card. These cards open project websites; they do not install or update software."),
     ("Project status tags", "Use the Project stamp dropdown directly on an admin row to save immediately, or EDIT an app and pick a colored status stamp under Project status, then SAVE APP DETAILS. This adds a colored stamp to its card. MANAGE STATUS STAMPS lets admins add, rename, recolor, or remove shared stamps. Defaults are Released, In development, and Seeking funding for prototype. Status does not show or hide the card, change GitHub privacy, or guarantee a compatible download. Seeking funding can describe hardware projects too."),
@@ -686,6 +759,40 @@ const HELP_TOPICS: &[(&str, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supported_editor_shows_project_types_instead_of_tool_categories() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx);
+        let mut panel = CentralPanel::new(None);
+        panel.manage_supported = true;
+        panel.editor_open = true;
+        panel.categories = vec!["Hardware".into()];
+        panel.project_types = vec!["Podcast".into(), "Twitch stream".into()];
+        panel.draft_category = "Podcast".into();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 1500.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    panel.admin(ui);
+                });
+            },
+        );
+        let has = |label: &str| {
+            output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == label))
+        };
+        assert!(has("Project type"));
+        assert!(has("MANAGE PROJECT TYPES"));
+        assert!(has("Podcast"));
+        assert!(!has("Hardware"));
+        assert!(!has("MANAGE CATEGORIES"));
+    }
 
     #[test]
     fn importing_a_link_fills_new_apps_but_preserves_existing_identity() {

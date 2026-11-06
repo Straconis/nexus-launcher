@@ -102,6 +102,21 @@ impl CentralClient {
         }
     }
 
+    pub fn project_types(
+        &self,
+        change: Option<&nexus_protocol::CategoryChange>,
+    ) -> Result<Vec<String>, String> {
+        match change {
+            Some(change) => self.send(
+                "POST",
+                "v1/admin/project-types",
+                true,
+                Some(serde_json::to_value(change).map_err(|err| err.to_string())?),
+            ),
+            None => self.send("GET", "v1/admin/project-types", true, None),
+        }
+    }
+
     pub fn categories(&self) -> Result<Vec<String>, String> {
         self.send("GET", "v1/admin/categories", true, None)
     }

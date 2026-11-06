@@ -772,3 +772,88 @@ fn category_subtrees_rename_and_reject_cycles() {
     drop(db);
     std::fs::remove_file(path).unwrap();
 }
+
+#[tokio::test]
+async fn supported_project_types_are_independent_of_tool_categories() {
+    let harness = harness();
+    let app = &harness.app;
+    let (status, _) = send(app, "GET", "/v1/admin/project-types", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    harness.fake.set_user(7, "steve");
+    let (admin, _) = login(app).await;
+    for (id, kind) in [("tool", "app"), ("partner", "supported")] {
+        let (status, _) = send(app, "POST", "/v1/admin/apps", Some(&admin), Some(json!({"id":id,"kind":kind,"name":id,"visibility":"public","homepage":"https://example.com","category":"Podcast","published":true}))).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/admin/project-types",
+        Some(&admin),
+        Some(json!({"name":"Podcast","replacement":"Horror podcast"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = send(app, "GET", "/v1/admin/apps", Some(&admin), None).await;
+    let apps: Vec<AdminApp> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        apps.iter()
+            .find(|app| app.id == "tool")
+            .unwrap()
+            .category
+            .as_deref(),
+        Some("Podcast")
+    );
+    assert_eq!(
+        apps.iter()
+            .find(|app| app.id == "partner")
+            .unwrap()
+            .category
+            .as_deref(),
+        Some("Horror podcast")
+    );
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/admin/categories",
+        Some(&admin),
+        Some(json!({"name":"Podcast","replacement":"Audio tools"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = send(app, "GET", "/v1/admin/apps", Some(&admin), None).await;
+    let apps: Vec<AdminApp> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        apps.iter()
+            .find(|app| app.id == "partner")
+            .unwrap()
+            .category
+            .as_deref(),
+        Some("Horror podcast")
+    );
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/admin/project-types",
+        Some(&admin),
+        Some(json!({"name":"Horror podcast","replacement":null})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = send(app, "GET", "/v1/admin/apps", Some(&admin), None).await;
+    let apps: Vec<AdminApp> = serde_json::from_slice(&body).unwrap();
+    assert!(apps
+        .iter()
+        .find(|app| app.id == "partner")
+        .unwrap()
+        .category
+        .is_none());
+    assert_eq!(
+        apps.iter()
+            .find(|app| app.id == "tool")
+            .unwrap()
+            .category
+            .as_deref(),
+        Some("Audio tools")
+    );
+}

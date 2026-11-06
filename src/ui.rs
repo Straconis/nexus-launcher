@@ -100,6 +100,11 @@ enum Job {
 }
 
 enum CentralJob {
+    ProjectTypes {
+        server_url: String,
+        token: String,
+        change: Option<nexus_protocol::CategoryChange>,
+    },
     SetProjectStatus {
         server_url: String,
         token: String,
@@ -216,6 +221,7 @@ enum Event {
 }
 
 enum CentralEvent {
+    ProjectTypes(Result<Vec<String>, String>),
     StatusStamps(Result<Vec<nexus_protocol::StatusStamp>, String>),
     Categories(Result<Vec<String>, String>),
     RepoPreview {
@@ -1169,6 +1175,11 @@ impl NexusApp {
                     });
                 }
                 central_panel::CentralAction::RefreshAdmin => {
+                    self.send_central(CentralJob::ProjectTypes {
+                        server_url: server_url.clone(),
+                        token: authed(&token),
+                        change: None,
+                    });
                     self.send_central(CentralJob::StatusStamps {
                         server_url: server_url.clone(),
                         token: authed(&token),
@@ -1186,6 +1197,13 @@ impl NexusApp {
                 }
                 central_panel::CentralAction::ChangeStatusStamp(change) => {
                     self.send_central(CentralJob::StatusStamps {
+                        server_url,
+                        token: authed(&token),
+                        change: Some(change),
+                    });
+                }
+                central_panel::CentralAction::ChangeProjectType(change) => {
+                    self.send_central(CentralJob::ProjectTypes {
                         server_url,
                         token: authed(&token),
                         change: Some(change),
@@ -1316,9 +1334,32 @@ impl NexusApp {
                 }
                 Err(message) => self.central.message = Some(message),
             },
+            CentralEvent::ProjectTypes(result) => match result {
+                Ok(types) => {
+                    if self.central.manage_supported
+                        && !self.central.draft_category.is_empty()
+                        && !types.contains(&self.central.draft_category)
+                    {
+                        self.central.draft_category.clear();
+                    }
+                    self.central.project_types = types;
+                    if let Some(server_url) = self.central.server_url.clone() {
+                        self.send_central(CentralJob::AdminList {
+                            server_url: server_url.clone(),
+                            token: self.central.token.clone().unwrap_or_default(),
+                        });
+                        self.send_central(CentralJob::Catalog {
+                            server_url,
+                            token: self.central.token.clone(),
+                        });
+                    }
+                }
+                Err(message) => self.central.message = Some(message),
+            },
             CentralEvent::Categories(result) => match result {
                 Ok(categories) => {
-                    if !self.central.draft_category.is_empty()
+                    if !self.central.manage_supported
+                        && !self.central.draft_category.is_empty()
                         && !categories.contains(&self.central.draft_category)
                     {
                         self.central.draft_category.clear();
@@ -1855,6 +1896,13 @@ fn report_client_failure(events: &Sender<Event>, job: Job, message: &str) {
 fn central_job(job: CentralJob, events: &Sender<Event>) {
     let event =
         match job {
+            CentralJob::ProjectTypes {
+                server_url,
+                token,
+                change,
+            } => CentralEvent::ProjectTypes(central_call(&server_url, Some(token), |client| {
+                client.project_types(change.as_ref())
+            })),
             CentralJob::SetProjectStatus {
                 server_url,
                 token,
