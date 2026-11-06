@@ -64,6 +64,11 @@ pub async fn repo_preview(
         let mut req = client.get(format!("https://api.github.com/repos/{repo}{path}"));
         if let Some(token) = &state.config.github_release_token {
             req = req.bearer_auth(token);
+        } else if let (Some(id), Some(secret)) = (
+            &state.config.github_client_id,
+            &state.config.github_client_secret,
+        ) {
+            req = req.basic_auth(id, Some(secret));
         }
         req
     };

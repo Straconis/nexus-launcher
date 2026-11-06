@@ -241,6 +241,16 @@ pub fn default_project_kind() -> String {
     "app".into()
 }
 
+pub const MAX_SUMMARY_CHARACTERS: usize = 4_000;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicMetadata {
+    pub release_json: Option<String>,
+    pub languages: Vec<String>,
+    #[serde(default)]
+    pub stale: bool,
+}
+
 #[cfg(test)]
 mod language_tests {
     #[test]

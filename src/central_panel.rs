@@ -39,6 +39,8 @@ pub struct CentralPanel {
     pub next_poll: Option<Instant>,
     pub catalog: Vec<CatalogApp>,
     pub admin_open: bool,
+    pub admin_loading: bool,
+    pub save_feedback: Option<String>,
     pub manage_supported: bool,
     help_open: bool,
     help_query: String,
@@ -88,6 +90,8 @@ impl CentralPanel {
             next_poll: None,
             catalog: Vec::new(),
             admin_open: false,
+            admin_loading: false,
+            save_feedback: None,
             manage_supported: false,
             help_open: false,
             help_query: String::new(),
@@ -419,6 +423,7 @@ impl CentralPanel {
                 self.draft_name.clear();
                 self.draft_repo.clear();
                 self.draft_summary.clear();
+                self.save_feedback = None;
                 self.draft_project_status = None;
                 self.draft_category.clear();
                 self.draft_homepage.clear();
@@ -492,6 +497,7 @@ impl CentralPanel {
                         self.draft_id = app.id.clone();
                         self.draft_name = app.name.clone();
                         self.draft_summary = app.summary.clone();
+                        self.save_feedback = None;
                         self.draft_project_status = app.project_status.clone();
                         self.draft_repo = app.repo.clone().unwrap_or_default();
                         self.draft_category = app.category.clone().unwrap_or_default();
@@ -596,12 +602,32 @@ impl CentralPanel {
                 "Status describes the project, independently of listing or available downloads.",
             );
             ui.label("Summary — explain what it does and why someone would use it.");
-            ui.add(
+            let summary_edit = ui.add(
                 egui::TextEdit::multiline(&mut self.draft_summary)
                     .desired_rows(3)
                     .desired_width(f32::INFINITY)
                     .hint_text("What can someone accomplish with this app?"),
             );
+            if summary_edit.changed() {
+                self.save_feedback = None;
+            }
+            let summary_characters = self.draft_summary.chars().count();
+            let summary_too_long = summary_characters > nexus_protocol::MAX_SUMMARY_CHARACTERS;
+            ui.label(
+                RichText::new(format!(
+                    "{summary_characters} / {} characters",
+                    nexus_protocol::MAX_SUMMARY_CHARACTERS
+                ))
+                .small()
+                .color(if summary_too_long { ACCENT } else { MUTED }),
+            );
+            if summary_too_long {
+                ui.label(
+                    RichText::new("Shorten the summary to 4,000 characters before saving.")
+                        .color(ACCENT),
+                );
+            }
+
             if !self.manage_supported && ui.button("DRAFT SUMMARY FROM GITHUB").on_hover_text("Loads the repository description and README on your server. Drafts are source-based, not AI-generated; nothing is saved automatically.").clicked() {
                 match crate::repo_input::parse(&self.draft_repo) {
                     Ok(fields) => { self.draft_repo = fields.repo.clone(); actions.push(CentralAction::RepoPreview(fields.repo)); }
@@ -694,8 +720,28 @@ impl CentralPanel {
                         .hint_text("https://"),
                 );
             });
-            if cta(ui, "SAVE APP DETAILS", CtaKind::Primary, 190.0).clicked() {
+            if cta(
+                ui,
+                "SAVE APP DETAILS",
+                if summary_too_long {
+                    CtaKind::Disabled
+                } else {
+                    CtaKind::Primary
+                },
+                190.0,
+            )
+            .clicked()
+            {
                 actions.push(CentralAction::SaveApp);
+            }
+            if let Some(feedback) = &self.save_feedback {
+                ui.label(
+                    RichText::new(feedback).color(if feedback.starts_with("Save failed") {
+                        ACCENT
+                    } else {
+                        MUTED
+                    }),
+                );
             }
             ui.label(
                 "New apps start hidden. After saving, choose SHOW IN LAUNCHER in the list above.",

@@ -44,6 +44,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/account", get(account))
         .route("/v1/catalog", get(catalog))
         .route("/v1/apps/{id}/release", get(release))
+        .route("/v1/apps/{id}/public-metadata", get(public_metadata))
         .route("/v1/apps/{id}/languages", get(languages))
         .route("/v1/apps/{id}/download", get(download))
         .route(
@@ -148,6 +149,52 @@ async fn release(
     let app = load_visible(&state, caller.as_ref(), &id).await?;
     let meta = metadata_for(&state, &app, &query.os, &query.arch).await?;
     Ok(Json(meta))
+}
+
+async fn public_metadata(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<nexus_protocol::PublicMetadata>, ApiFailure> {
+    let caller = optional_caller(&state, &headers)?;
+    let app = load_visible(&state, caller.as_ref(), &id).await?;
+    if app.visibility != Visibility::Public || app.kind != "app" {
+        return Err(ApiFailure::forbidden());
+    }
+    let repo = app.repo.as_deref().ok_or_else(ApiFailure::not_found)?;
+    let repo = policy::parse_repo(repo).map_err(|_| ApiFailure::not_found())?;
+    let cached = state.db.public_metadata_cache(&repo)?;
+    if let Some((time, metadata)) = &cached {
+        if chrono::Utc::now().timestamp().saturating_sub(*time) < 300 {
+            return Ok(Json(metadata.clone()));
+        }
+    }
+    match state
+        .github
+        .public_metadata(
+            &repo,
+            state.config.github_client_id.as_deref(),
+            state.config.github_client_secret.as_deref(),
+            state.config.github_release_token.as_deref(),
+        )
+        .await
+    {
+        Ok(metadata) => {
+            state.db.cache_public_metadata(&repo, &metadata)?;
+            Ok(Json(metadata))
+        }
+        Err(_) => match cached {
+            Some((_, mut metadata)) => {
+                metadata.stale = true;
+                Ok(Json(metadata))
+            }
+            None => Err(ApiFailure::new(
+                StatusCode::BAD_GATEWAY,
+                "metadata_unavailable",
+                "GitHub release information is temporarily unavailable; try again later",
+            )),
+        },
+    }
 }
 
 async fn languages(
@@ -519,11 +566,11 @@ fn validate_upsert(body: UpsertApp) -> Result<AppRow, ApiFailure> {
             "name must be 1 to 80 characters",
         ));
     }
-    if body.summary.len() > 400 {
+    if body.summary.chars().count() > nexus_protocol::MAX_SUMMARY_CHARACTERS {
         return Err(ApiFailure::new(
             StatusCode::BAD_REQUEST,
             "invalid_app",
-            "summary is too long",
+            "summary must be 4,000 characters or fewer",
         ));
     }
     let repo = match policy::clean_optional(body.repo) {

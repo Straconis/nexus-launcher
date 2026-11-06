@@ -118,6 +118,11 @@ enum Job {
 }
 
 enum CentralJob {
+    PublicMetadata {
+        server_url: String,
+        token: Option<String>,
+        id: String,
+    },
     ProjectTypes {
         server_url: String,
         token: String,
@@ -239,6 +244,11 @@ enum Event {
 }
 
 enum CentralEvent {
+    PublicMetadata {
+        id: String,
+        result: Result<nexus_protocol::PublicMetadata, String>,
+    },
+    AppSaved(Result<(), String>),
     ProjectTypes(Result<Vec<String>, String>),
     StatusStamps(Result<Vec<nexus_protocol::StatusStamp>, String>),
     Categories(Result<Vec<String>, String>),
@@ -348,6 +358,27 @@ impl NexusApp {
     }
 
     fn queue_fetches(&mut self) {
+        if let Some(server_url) = self.central.server_url.clone() {
+            let ids: Vec<_> = self
+                .cards
+                .iter()
+                .filter(|card| {
+                    card.entry.kind == "app"
+                        && !card.private_download
+                        && card.entry.repo.is_some()
+                        && matches!(card.phase, Phase::Loading)
+                })
+                .map(|card| card.entry.id.clone())
+                .collect();
+            for id in ids {
+                self.send_central(CentralJob::PublicMetadata {
+                    server_url: server_url.clone(),
+                    token: self.central.token.clone(),
+                    id,
+                });
+            }
+            return;
+        }
         let targets: Vec<FetchTarget> = self
             .cards
             .iter()
@@ -525,6 +556,21 @@ impl NexusApp {
     }
 
     fn retry(&mut self, id: &str) {
+        if let Some(server_url) = self.central.server_url.clone() {
+            if let Some(card) = self.cards.iter_mut().find(|card| card.entry.id == id) {
+                card.phase = Phase::Loading;
+                if card.private_download {
+                    self.queue_private();
+                } else {
+                    self.send_central(CentralJob::PublicMetadata {
+                        server_url,
+                        token: self.central.token.clone(),
+                        id: id.into(),
+                    });
+                }
+            }
+            return;
+        }
         let Some(card) = self.cards.iter_mut().find(|card| card.entry.id == id) else {
             return;
         };
@@ -1258,6 +1304,7 @@ impl NexusApp {
                     });
                 }
                 central_panel::CentralAction::RefreshAdmin => {
+                    self.central.admin_loading = true;
                     self.send_central(CentralJob::ProjectTypes {
                         server_url: server_url.clone(),
                         token: authed(&token),
@@ -1315,6 +1362,7 @@ impl NexusApp {
                     });
                 }
                 central_panel::CentralAction::SaveApp => {
+                    self.central.save_feedback = Some("Saving…".into());
                     let app = nexus_protocol::UpsertApp {
                         id: self.central.draft_id.clone(),
                         name: self.central.draft_name.clone(),
@@ -1392,6 +1440,39 @@ impl NexusApp {
 
     fn apply_central(&mut self, event: CentralEvent) {
         match event {
+            CentralEvent::PublicMetadata { id, result } => match result {
+                Ok(metadata) => {
+                    self.rate = None;
+                    self.limited_detail = None;
+                    self.recompute_banner();
+                    if metadata.stale {
+                        self.central.message =
+                            Some("GitHub unavailable; showing cached release information.".into());
+                    }
+                    self.apply(Event::Languages {
+                        id: id.clone(),
+                        names: metadata.languages,
+                    });
+                    self.apply_fetch(
+                        id,
+                        metadata
+                            .release_json
+                            .map(|body| github::interpret(200, None, &body))
+                            .unwrap_or(FetchOutcome::Missing),
+                    );
+                }
+                Err(message) => self.apply_fetch(id, FetchOutcome::Failed(message)),
+            },
+            CentralEvent::AppSaved(result) => match result {
+                Ok(()) => {
+                    self.central.save_feedback = Some("Saved app details.".into());
+                    self.apply_central(CentralEvent::Note(Ok("Saved app details.".into())));
+                }
+                Err(error) => {
+                    self.central.save_feedback = Some(format!("Save failed: {error}"));
+                    self.central.message = Some(format!("Save failed: {error}"));
+                }
+            },
             CentralEvent::StatusStamps(result) => match result {
                 Ok(stamps) => {
                     if self
@@ -1549,10 +1630,16 @@ impl NexusApp {
             }
             CentralEvent::Catalog(Err(message)) => self.central.message = Some(message),
             CentralEvent::Admin(Ok(apps)) => {
-                self.central.message = Some(format!("Loaded {} apps.", apps.len()));
+                if self.central.admin_loading {
+                    self.central.message = Some(format!("Loaded {} apps.", apps.len()));
+                }
+                self.central.admin_loading = false;
                 self.central.admin_apps = apps;
             }
-            CentralEvent::Admin(Err(message)) => self.central.message = Some(message),
+            CentralEvent::Admin(Err(message)) => {
+                self.central.admin_loading = false;
+                self.central.message = Some(message);
+            }
             CentralEvent::Grants(Ok(grants)) => {
                 self.central.message = Some(format!(
                     "Loaded {} grants for {}.",
@@ -1979,6 +2066,14 @@ fn report_client_failure(events: &Sender<Event>, job: Job, message: &str) {
 fn central_job(job: CentralJob, events: &Sender<Event>) {
     let event =
         match job {
+            CentralJob::PublicMetadata {
+                server_url,
+                token,
+                id,
+            } => {
+                let result = central_call(&server_url, token, |client| client.public_metadata(&id));
+                CentralEvent::PublicMetadata { id, result }
+            }
             CentralJob::ProjectTypes {
                 server_url,
                 token,
@@ -2062,8 +2157,8 @@ fn central_job(job: CentralJob, events: &Sender<Event>) {
                 server_url,
                 token,
                 app,
-            } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
-                client.upsert_app(&app).map(|_| "Saved the app.".into())
+            } => CentralEvent::AppSaved(central_call(&server_url, Some(token), |client| {
+                client.upsert_app(&app).map(|_| ())
             })),
             CentralJob::Publish {
                 server_url,

@@ -138,3 +138,7 @@ These steps are the intended setup. They were **not** executed against a live Gi
 `cargo test -p nexus-server` covers anonymous, member, and admin callers; grant and revoke; a second user's direct download and release request; unpublished apps; slug and repo rejection; an asset URL that is not a GitHub host; a checksum mismatch; secret strings absent from error bodies; and a device poll that cannot be replayed.
 
 Desktop tests cover the server URL rules, the session file mode on Unix, and redaction of the session token in `Debug`.
+
+### Public release metadata
+
+Public app releases and language badges are cached in the broker for five minutes. The broker uses its OAuth application credentials for public GitHub metadata when no release token is configured; credentials stay on the server. Previously cached metadata remains usable if GitHub is temporarily unavailable. Visibility is checked before serving the cache. Desktop installations without a central server still use GitHub's anonymous API limits.

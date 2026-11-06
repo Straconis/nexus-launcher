@@ -55,6 +55,15 @@ pub enum GithubError {
 
 #[async_trait]
 pub trait Github: Send + Sync {
+    async fn public_metadata(
+        &self,
+        _repo: &str,
+        _client_id: Option<&str>,
+        _client_secret: Option<&str>,
+        _token: Option<&str>,
+    ) -> Result<nexus_protocol::PublicMetadata, GithubError> {
+        Err(GithubError::Failed)
+    }
     async fn start_device(&self, client_id: &str) -> Result<DeviceCodes, GithubError>;
     async fn poll_device(
         &self,
@@ -110,6 +119,58 @@ impl LiveGithub {
 
 #[async_trait]
 impl Github for LiveGithub {
+    async fn public_metadata(
+        &self,
+        repo: &str,
+        client_id: Option<&str>,
+        client_secret: Option<&str>,
+        token: Option<&str>,
+    ) -> Result<nexus_protocol::PublicMetadata, GithubError> {
+        let client = reqwest::Client::builder()
+            .user_agent("nexus-server-public-metadata")
+            .timeout(Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| GithubError::Failed)?;
+        let request = |suffix: &str| {
+            let request = client
+                .get(format!("https://api.github.com/repos/{repo}/{suffix}"))
+                .header("Accept", "application/vnd.github+json");
+            if let Some(token) = token {
+                request.bearer_auth(token)
+            } else if let (Some(id), Some(secret)) = (client_id, client_secret) {
+                request.basic_auth(id, Some(secret))
+            } else {
+                request
+            }
+        };
+        let response = request("releases/latest")
+            .send()
+            .await
+            .map_err(|_| GithubError::Failed)?;
+        let release_json = if response.status() == reqwest::StatusCode::NOT_FOUND {
+            None
+        } else if response.status().is_success() {
+            Some(response.text().await.map_err(|_| GithubError::Failed)?)
+        } else {
+            return Err(GithubError::Failed);
+        };
+        let languages = if let Ok(response) = request("languages").send().await {
+            if response.status().is_success() {
+                nexus_protocol::top_languages(response.json().await.unwrap_or_default())
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        Ok(nexus_protocol::PublicMetadata {
+            release_json,
+            languages,
+            stale: false,
+        })
+    }
+
     async fn start_device(&self, client_id: &str) -> Result<DeviceCodes, GithubError> {
         let response = self
             .http

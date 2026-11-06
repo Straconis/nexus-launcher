@@ -117,6 +117,15 @@ impl CentralClient {
         }
     }
 
+    pub fn public_metadata(&self, id: &str) -> Result<nexus_protocol::PublicMetadata, String> {
+        self.send(
+            "GET",
+            &format!("v1/apps/{id}/public-metadata"),
+            self.token.is_some(),
+            None,
+        )
+    }
+
     pub fn categories(&self) -> Result<Vec<String>, String> {
         self.send("GET", "v1/admin/categories", true, None)
     }

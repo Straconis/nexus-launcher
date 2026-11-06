@@ -28,6 +28,7 @@ struct Fake {
     user: Mutex<Identity>,
     downloads: Mutex<Vec<String>>,
     polls: AtomicUsize,
+    metadata_calls: AtomicUsize,
     bytes: Vec<u8>,
     sha: String,
 }
@@ -42,6 +43,7 @@ impl Fake {
             }),
             downloads: Mutex::new(Vec::new()),
             polls: AtomicUsize::new(0),
+            metadata_calls: AtomicUsize::new(0),
             bytes,
             sha,
         }
@@ -57,6 +59,21 @@ impl Fake {
 
 #[async_trait]
 impl Github for Fake {
+    async fn public_metadata(
+        &self,
+        _repo: &str,
+        _id: Option<&str>,
+        _secret: Option<&str>,
+        _token: Option<&str>,
+    ) -> Result<nexus_protocol::PublicMetadata, GithubError> {
+        self.metadata_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(nexus_protocol::PublicMetadata {
+            release_json: None,
+            languages: vec!["Python".into()],
+            stale: false,
+        })
+    }
+
     async fn start_device(&self, _client_id: &str) -> Result<DeviceCodes, GithubError> {
         Ok(DeviceCodes {
             device_code: DEVICE_CODE.into(),
@@ -856,4 +873,89 @@ async fn supported_project_types_are_independent_of_tool_categories() {
             .as_deref(),
         Some("Audio tools")
     );
+}
+
+#[tokio::test]
+async fn summaries_longer_than_400_chars_save_and_use_unicode_character_limits() {
+    let harness = harness();
+    let app = &harness.app;
+    harness.fake.set_user(7, "steve");
+    let (admin, _) = login(app).await;
+    for summary in ["x".repeat(407), "🎯".repeat(1_001)] {
+        let (status, body) = send(app,"POST","/v1/admin/apps",Some(&admin),Some(json!({"id":"summary-check","name":"Summary check","summary":summary,"visibility":"public","published":true}))).await;
+        assert_eq!(status, StatusCode::OK, "{}", text(&body));
+        let (_, body) = send(app, "GET", "/v1/catalog", None, None).await;
+        let catalog: Vec<CatalogApp> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            catalog
+                .iter()
+                .find(|app| app.id == "summary-check")
+                .unwrap()
+                .summary,
+            summary
+        );
+    }
+    let (status, body) = send(app,"POST","/v1/admin/apps",Some(&admin),Some(json!({"id":"summary-check","name":"Summary check","summary":"x".repeat(4_001),"visibility":"public"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(text(&body).contains("4,000"));
+}
+
+#[tokio::test]
+async fn public_metadata_is_cached_but_unpublishing_revokes_access() {
+    let harness = harness();
+    harness.fake.set_user(7, "steve");
+    let (token, _) = login(&harness.app).await;
+    let mut entry = json!({"id":"cached", "name":"Cached", "repo":"Straconis/cached", "visibility":"public", "published":true});
+    assert_eq!(
+        send(
+            &harness.app,
+            "POST",
+            "/v1/admin/apps",
+            Some(&token),
+            Some(entry.clone())
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    for _ in 0..2 {
+        let (status, body) = send(
+            &harness.app,
+            "GET",
+            "/v1/apps/cached/public-metadata",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(text(&body).contains("Python"));
+        assert_redacted(&text(&body));
+    }
+    assert_eq!(harness.fake.metadata_calls.load(Ordering::SeqCst), 1);
+    entry["published"] = json!(false);
+    assert_eq!(
+        send(
+            &harness.app,
+            "POST",
+            "/v1/admin/apps",
+            Some(&token),
+            Some(entry)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_ne!(
+        send(
+            &harness.app,
+            "GET",
+            "/v1/apps/cached/public-metadata",
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(harness.fake.metadata_calls.load(Ordering::SeqCst), 1);
 }

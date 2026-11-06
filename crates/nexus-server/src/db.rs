@@ -130,6 +130,7 @@ impl Database {
                     .map_err(|err| err.to_string())?;
             }
         }
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS public_metadata_cache(repo TEXT PRIMARY KEY, checked_at INTEGER NOT NULL, body TEXT NOT NULL);").map_err(|err| err.to_string())?;
         #[cfg(unix)]
         tighten_db_file(path);
         Ok(Self {
@@ -586,6 +587,34 @@ impl Database {
             }
         }
         tx.commit()?;
+        Ok(())
+    }
+}
+
+impl Database {
+    pub fn public_metadata_cache(
+        &self,
+        repo: &str,
+    ) -> Result<Option<(i64, nexus_protocol::PublicMetadata)>, ApiFailure> {
+        let conn = self.lock()?;
+        let mut stmt =
+            conn.prepare("SELECT checked_at,body FROM public_metadata_cache WHERE repo=?")?;
+        let mut rows = stmt.query([repo])?;
+        if let Some(row) = rows.next()? {
+            let body: String = row.get(1)?;
+            if let Ok(metadata) = serde_json::from_str(&body) {
+                return Ok(Some((row.get(0)?, metadata)));
+            }
+        }
+        Ok(None)
+    }
+    pub fn cache_public_metadata(
+        &self,
+        repo: &str,
+        metadata: &nexus_protocol::PublicMetadata,
+    ) -> Result<(), ApiFailure> {
+        let body = serde_json::to_string(metadata).map_err(|_| ApiFailure::internal())?;
+        self.lock()?.execute("INSERT INTO public_metadata_cache(repo,checked_at,body) VALUES (?,?,?) ON CONFLICT(repo) DO UPDATE SET checked_at=excluded.checked_at,body=excluded.body", params![repo,chrono::Utc::now().timestamp(),body])?;
         Ok(())
     }
 }
