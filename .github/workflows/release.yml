@@ -1,0 +1,173 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: linux-x86_64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Linux UI and OpenSSL libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev libgtk-3-dev \
+            libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libgl1-mesa-dev
+
+      - name: Test and build
+        run: |
+          cargo test --release
+          cargo build --release
+
+      - name: Package tar.gz
+        run: ./scripts/package-linux.sh
+
+      - name: Smoke test packaged binary
+        run: |
+          tmp=$(mktemp -d)
+          tar -C "$tmp" -xzf dist/nexus-launcher-linux-x86_64.tar.gz
+          bin="$tmp/nexus-launcher-linux-x86_64/nexus-launcher"
+          (cd / && "$bin" --check)
+          echo "glibc symbols:"
+          objdump -T "$bin" | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -5
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexus-launcher-linux-x86_64.tar.gz
+          path: dist/nexus-launcher-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: windows-x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test and build
+        run: |
+          cargo test --release
+          cargo build --release
+        env:
+          # Portable zip: do not require the Visual C++ redistributable.
+          RUSTFLAGS: -C target-feature=+crt-static
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "nexus-launcher-windows-x86_64"
+          $stage = Join-Path "dist" $name
+          New-Item -ItemType Directory -Force -Path (Join-Path $stage "catalog") | Out-Null
+          Copy-Item "target/release/nexus-launcher.exe" (Join-Path $stage "nexus-launcher.exe")
+          Copy-Item "catalog/apps.toml" (Join-Path $stage "catalog/apps.toml")
+          Copy-Item "README.md","LICENSE-MIT","LICENSE-APACHE","packaging/PORTABLE.txt" $stage
+          Copy-Item "assets/fonts/OFL.txt" (Join-Path $stage "OFL-Orbitron.txt")
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          if (Test-Path "dist/$name.zip") { Remove-Item "dist/$name.zip" }
+          tar -a -c -f "dist/$name.zip" -C dist $name
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Item "dist/$name.zip" | Format-List FullName, Length
+
+      - name: Smoke test packaged binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tmp = Join-Path $env:RUNNER_TEMP "nexus-unpack"
+          if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          tar -xf dist/nexus-launcher-windows-x86_64.zip -C $tmp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = Get-ChildItem -Path $tmp -Recurse -Filter nexus-launcher.exe | Select-Object -First 1
+          if (-not $exe) { throw "nexus-launcher.exe missing from zip" }
+          & $exe.FullName --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexus-launcher-windows-x86_64.zip
+          path: dist/nexus-launcher-windows-x86_64.zip
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: [linux, windows]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: SHA256SUMS.txt
+        run: |
+          cd artifacts
+          ls -l
+          sha256sum nexus-launcher-linux-x86_64.tar.gz nexus-launcher-windows-x86_64.zip | tee SHA256SUMS.txt
+
+      - name: Release notes
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          notes=".github/release-notes/${tag}.md"
+          if [ -f "$notes" ]; then
+            cp "$notes" release-body.md
+          else
+            {
+              echo "# Nexus Launcher ${tag}"
+              echo
+              echo "Prebuilt binaries for Linux x86_64 (.tar.gz) and Windows x86_64 (portable .zip), plus SHA256SUMS.txt."
+              echo
+              echo "macOS binaries are not included. Build from source with Rust 1.99.1 if you need another platform. See README.md."
+              echo
+              echo "Unpack the archive and run nexus-launcher or nexus-launcher.exe from that directory so it finds catalog/apps.toml. --check parses the catalog without opening a window."
+            } > release-body.md
+          fi
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          title="Nexus Launcher ${tag}"
+          pre=()
+          case "$tag" in
+            *alpha*|*beta*|*rc*) pre=(--prerelease) ;;
+          esac
+          files=(
+            artifacts/nexus-launcher-linux-x86_64.tar.gz
+            artifacts/nexus-launcher-windows-x86_64.zip
+            artifacts/SHA256SUMS.txt
+          )
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "$title" --notes-file release-body.md "${pre[@]}"
+            gh release upload "$tag" "${files[@]}" --clobber
+          else
+            gh release create "$tag" --title "$title" --notes-file release-body.md "${pre[@]}" "${files[@]}"
+          fi
+          gh release view "$tag" --json url,isPrerelease,assets --jq '{url:.url,isPrerelease:.isPrerelease,assets:[.assets[].name]}'
