@@ -6,7 +6,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -14,6 +14,8 @@ jobs:
           toolchain: 1.99.1
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-ubuntu22-v1
       - name: Linux UI libraries
         run: |
           sudo apt-get update

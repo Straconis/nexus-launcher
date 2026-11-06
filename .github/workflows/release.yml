@@ -24,6 +24,8 @@ jobs:
           toolchain: 1.99.1
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-ubuntu22-v1
 
       - name: Linux UI and OpenSSL libraries
         run: |
