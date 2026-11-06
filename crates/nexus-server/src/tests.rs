@@ -264,7 +264,7 @@ async fn access_control_blocks_anonymous_and_cross_user_downloads() {
     let app = &harness.app;
     let (status, body) = send(app, "GET", "/v1/health", None, None).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(text(&body).contains("0.2.0-alpha"));
+    assert!(text(&body).contains(nexus_protocol::VERSION));
 
     let (status, _) = send(app, "GET", "/v1/admin/apps", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

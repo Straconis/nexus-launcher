@@ -1,6 +1,6 @@
 # Central catalog and per-user access
 
-This document describes the `0.2.0-alpha` broker. It is not a released build. Tagging and publishing stay unapproved. The self-update work on pull request #2 stays on `0.1.1-alpha` and is not part of this branch.
+This document describes the `0.3.0-alpha` broker. It is not a released build. The integrated launcher and broker have not been published as a GitHub release. The self-update work on pull request #2 stays on `0.1.1-alpha` and is not part of this branch.
 
 ## What it is
 

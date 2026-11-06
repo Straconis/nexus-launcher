@@ -2342,7 +2342,7 @@ dependencies = [
 
 [[package]]
 name = "nexus-launcher"
-version = "0.2.0-alpha"
+version = "0.3.0-alpha"
 dependencies = [
  "chrono",
  "directories",
@@ -2366,14 +2366,14 @@ dependencies = [
 
 [[package]]
 name = "nexus-protocol"
-version = "0.2.0-alpha"
+version = "0.3.0-alpha"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "nexus-server"
-version = "0.2.0-alpha"
+version = "0.3.0-alpha"
 dependencies = [
  "async-trait",
  "axum",

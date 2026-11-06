@@ -27,7 +27,7 @@ Tagged releases publish binaries on [GitHub Releases](https://github.com/Stracon
 
 macOS binaries are not part of this alpha. Unpack an archive and run `nexus-launcher` or `nexus-launcher.exe` from that directory so the program finds `catalog/apps.toml`. `--check` parses the catalog and exits. Runtime requirements and the alpha limits are in the release notes. Building from source is described under [Build](#build).
 
-This source tree is **0.2.0-alpha**. It is not a published GitHub release. `v0.1.0-alpha` is the only published download, and it does not include central sign-in. The separate self-update branch is `0.1.1-alpha` and is not merged here.
+This source tree is **0.3.0-alpha**. It is not a published GitHub release. `v0.1.0-alpha` is the only published download, and it does not include central sign-in. The separate self-update branch is `0.1.1-alpha` and is not merged here.
 
 ## Central catalog
 
