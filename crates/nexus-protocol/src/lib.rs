@@ -76,7 +76,13 @@ impl Visibility {
 pub struct CatalogApp {
     pub id: String,
     pub name: String,
+    #[serde(default = "default_project_kind")]
+    pub kind: String,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_stamp: Option<StatusStamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -91,7 +97,11 @@ pub struct CatalogApp {
 pub struct AdminApp {
     pub id: String,
     pub name: String,
+    #[serde(default = "default_project_kind")]
+    pub kind: String,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -106,8 +116,12 @@ pub struct AdminApp {
 pub struct UpsertApp {
     pub id: String,
     pub name: String,
+    #[serde(default = "default_project_kind")]
+    pub kind: String,
     #[serde(default)]
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_status: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
     #[serde(default)]
@@ -174,4 +188,71 @@ pub struct RepoPreview {
     pub description: String,
     pub readme_excerpt: String,
     pub summary: String,
+}
+
+/// GitHub Linguist byte counts, ranked by usage with deterministic ties.
+pub fn top_languages(counts: std::collections::BTreeMap<String, u64>) -> Vec<String> {
+    let mut values: Vec<_> = counts.into_iter().filter(|(_, bytes)| *bytes > 0).collect();
+    values.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    values.into_iter().take(3).map(|(name, _)| name).collect()
+}
+
+pub const PROJECT_STATUSES: &[(&str, &str)] = &[
+    ("released", "Released"),
+    ("in_development", "In development"),
+    ("seeking_funding", "Seeking funding for prototype"),
+];
+
+pub fn project_status_label(status: &str) -> &str {
+    PROJECT_STATUSES
+        .iter()
+        .find(|(key, _)| *key == status)
+        .map(|(_, label)| *label)
+        .unwrap_or("No status")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusStamp {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusStampChange {
+    pub id: String,
+    pub name: Option<String>,
+    pub color: Option<String>,
+}
+
+pub fn default_status_stamps() -> Vec<StatusStamp> {
+    PROJECT_STATUSES
+        .iter()
+        .zip(["#52d69a", "#f2bc56", "#5dc8ed"])
+        .map(|((id, name), color)| StatusStamp {
+            id: (*id).into(),
+            name: (*name).into(),
+            color: color.into(),
+        })
+        .collect()
+}
+
+pub fn default_project_kind() -> String {
+    "app".into()
+}
+
+#[cfg(test)]
+mod language_tests {
+    #[test]
+    fn ranks_languages_by_bytes_not_alphabetically() {
+        let counts = [
+            ("Python".into(), 900),
+            ("Shell".into(), 20),
+            ("Rust".into(), 500),
+            ("HTML".into(), 1),
+            ("Empty".into(), 0),
+        ]
+        .into();
+        assert_eq!(super::top_languages(counts), ["Python", "Rust", "Shell"]);
+    }
 }

@@ -30,12 +30,17 @@ pub struct AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
+        .route(
+            "/v1/admin/status-stamps",
+            get(crate::admin_tools::status_stamps).post(crate::admin_tools::change_status_stamp),
+        )
         .route("/v1/auth/device/start", post(device_start))
         .route("/v1/auth/device/poll", post(device_poll))
         .route("/v1/auth/logout", post(logout))
         .route("/v1/account", get(account))
         .route("/v1/catalog", get(catalog))
         .route("/v1/apps/{id}/release", get(release))
+        .route("/v1/apps/{id}/languages", get(languages))
         .route("/v1/apps/{id}/download", get(download))
         .route(
             "/v1/admin/categories",
@@ -48,6 +53,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/admin/apps", get(admin_list).post(admin_upsert))
         .route("/v1/admin/apps/{id}", axum::routing::delete(admin_delete))
         .route("/v1/admin/apps/{id}/published", post(admin_publish))
+        .route("/v1/admin/apps/{id}/status", post(admin_project_status))
         .route(
             "/v1/admin/apps/{id}/grants",
             get(admin_grants).post(admin_grant),
@@ -111,12 +117,13 @@ async fn catalog(
 ) -> Result<Json<Vec<CatalogApp>>, ApiFailure> {
     let caller = optional_caller(&state, &headers)?;
     let apps = state.db.apps()?;
+    let stamps = state.db.status_stamps()?;
     let mut visible = Vec::new();
     for app in apps {
         if !can_see(&state, caller.as_ref(), &app)? {
             continue;
         }
-        visible.push(catalog_view(&app));
+        visible.push(catalog_view(&app, &stamps));
     }
     Ok(Json(visible))
 }
@@ -137,6 +144,33 @@ async fn release(
     let app = load_visible(&state, caller.as_ref(), &id).await?;
     let meta = metadata_for(&state, &app, &query.os, &query.arch).await?;
     Ok(Json(meta))
+}
+
+async fn languages(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<String>>, ApiFailure> {
+    let caller = optional_caller(&state, &headers)?;
+    let app = load_visible(&state, caller.as_ref(), &id).await?;
+    let repo = app.repo.as_deref().ok_or_else(ApiFailure::not_found)?;
+    let repo = policy::parse_repo(repo).map_err(|_| ApiFailure::not_found())?;
+    let client = reqwest::Client::builder()
+        .user_agent("nexus-server")
+        .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| ApiFailure::internal())?;
+    let mut request = client.get(format!("https://api.github.com/repos/{repo}/languages"));
+    if let Some(token) = release_token(&state, &app) {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().await.map_err(|_| ApiFailure::internal())?;
+    if !response.status().is_success() {
+        return Ok(Json(Vec::new()));
+    }
+    let counts = response.json().await.map_err(|_| ApiFailure::internal())?;
+    Ok(Json(nexus_protocol::top_languages(counts)))
 }
 
 async fn download(
@@ -174,8 +208,69 @@ async fn admin_upsert(
 ) -> Result<(StatusCode, Json<AdminApp>), ApiFailure> {
     require_admin(&state, &headers)?;
     let app = validate_upsert(body)?;
+    if state
+        .db
+        .app(&app.id)?
+        .is_some_and(|existing| existing.kind != app.kind)
+    {
+        return Err(ApiFailure::new(
+            StatusCode::CONFLICT,
+            "id_in_use",
+            "that ID belongs to another listing type; choose a different ID",
+        ));
+    }
+    if app.project_status.as_ref().is_some_and(|id| {
+        !state
+            .db
+            .status_stamps()
+            .unwrap_or_default()
+            .iter()
+            .any(|stamp| &stamp.id == id)
+    }) {
+        return Err(ApiFailure::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_status",
+            "choose a configured status stamp",
+        ));
+    }
     state.db.upsert_app(&app, &auth::stamp(auth::now()))?;
     Ok((StatusCode::OK, Json(AdminApp::from(&app))))
+}
+
+#[derive(Deserialize)]
+struct ProjectStatusBody {
+    project_status: Option<String>,
+}
+
+async fn admin_project_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<ProjectStatusBody>,
+) -> Result<Json<serde_json::Value>, ApiFailure> {
+    require_admin(&state, &headers)?;
+    if let Some(status) = &body.project_status {
+        if !state
+            .db
+            .status_stamps()?
+            .iter()
+            .any(|stamp| &stamp.id == status)
+        {
+            return Err(ApiFailure::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_status",
+                "choose a configured status stamp",
+            ));
+        }
+    }
+    if !state.db.set_project_status(
+        &id,
+        body.project_status.as_deref(),
+        &auth::stamp(auth::now()),
+    )? {
+        return Err(ApiFailure::not_found());
+    }
+    Ok(Json(serde_json::json!({"saved":true})))
 }
 
 async fn admin_delete(
@@ -361,11 +456,18 @@ async fn load_visible(
     }
 }
 
-fn catalog_view(app: &AppRow) -> CatalogApp {
+fn catalog_view(app: &AppRow, stamps: &[nexus_protocol::StatusStamp]) -> CatalogApp {
     CatalogApp {
         id: app.id.clone(),
         name: app.name.clone(),
+        kind: app.kind.clone(),
         summary: app.summary.clone(),
+        project_status: app.project_status.clone(),
+        status_stamp: app
+            .project_status
+            .as_ref()
+            .and_then(|id| stamps.iter().find(|stamp| &stamp.id == id))
+            .cloned(),
         category: app.category.clone(),
         homepage: app.homepage.clone(),
         repo: if app.visibility == Visibility::Public {
@@ -435,11 +537,27 @@ fn validate_upsert(body: UpsertApp) -> Result<AppRow, ApiFailure> {
         })?),
         None => None,
     };
+    if !matches!(body.kind.as_str(), "app" | "supported") {
+        return Err(ApiFailure::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_kind",
+            "project kind must be app or supported",
+        ));
+    }
+    if body.kind == "supported" && (homepage.is_none() || body.visibility != Visibility::Public) {
+        return Err(ApiFailure::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_project",
+            "supported projects need a public listing and an https project link",
+        ));
+    }
     let category = policy::clean_optional(body.category).filter(|value| value.len() <= 40);
     Ok(AppRow {
         id,
         name: name.to_string(),
+        kind: body.kind,
         summary: body.summary,
+        project_status: body.project_status,
         category,
         homepage,
         repo,

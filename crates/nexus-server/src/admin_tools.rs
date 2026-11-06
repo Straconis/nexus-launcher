@@ -31,8 +31,12 @@ pub async fn change_category(
     let name = body.name.trim();
     let replacement = body.replacement.as_deref().map(str::trim);
     if name.len() > 60
-        || replacement
-            .is_some_and(|v| v.is_empty() || v.len() > 60 || v.chars().any(char::is_control))
+        || replacement.is_some_and(|v| {
+            v.is_empty()
+                || v.len() > 60
+                || v.chars().any(char::is_control)
+                || v.split(" / ").any(|part| part.trim().is_empty())
+        })
         || name.chars().any(char::is_control)
         || (name.is_empty() && replacement.is_none())
     {
@@ -136,6 +140,46 @@ fn introductory_paragraph(readme: &str) -> String {
         paragraph.push_str(&text.replace(['`', '*'], ""));
     }
     String::new()
+}
+
+pub async fn status_stamps(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<nexus_protocol::StatusStamp>>, ApiFailure> {
+    require_admin(&state, &headers)?;
+    Ok(Json(state.db.status_stamps()?))
+}
+
+pub async fn change_status_stamp(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(mut body): Json<nexus_protocol::StatusStampChange>,
+) -> Result<Json<Vec<nexus_protocol::StatusStamp>>, ApiFailure> {
+    require_admin(&state, &headers)?;
+    if body.id.is_empty()
+        || body.id.len() > 64
+        || !body
+            .id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(invalid("status id must be a short slug"));
+    }
+    if let Some(name) = &mut body.name {
+        *name = name.trim().to_string();
+        if name.is_empty() || name.chars().count() > 60 || name.chars().any(char::is_control) {
+            return Err(invalid("status label must be 1 to 60 characters"));
+        }
+        let color = body.color.as_deref().unwrap_or("");
+        if color.len() != 7
+            || !color.starts_with('#')
+            || !color[1..].chars().all(|c| c.is_ascii_hexdigit())
+        {
+            return Err(invalid("status color must be #RRGGBB"));
+        }
+    }
+    state.db.change_status_stamp(&body)?;
+    Ok(Json(state.db.status_stamps()?))
 }
 
 #[cfg(test)]

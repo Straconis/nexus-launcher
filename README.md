@@ -64,6 +64,8 @@ The header pairs a dedicated Straconis Nexus Launcher graphic on the left with t
 | muted | `#b4b4c5` | Summaries and secondary lines |
 | border | `#64203c` | Card and panel strokes |
 
+Cards show up to three programming languages reported by GitHub, ordered by source-code size. Public repository language lookups use the same unauthenticated API budget as release checks; private repository languages are fetched through the access-checked broker. These labels describe source code, not runtime requirements.
+
 ## Catalog
 
 `catalog/apps.toml` is the extension point. `[[app]]` tables are the entries. Unknown keys are ignored. `nexus-launcher --check` parses the file, prints each id, and exits. It does not contact GitHub.

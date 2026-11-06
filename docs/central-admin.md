@@ -21,11 +21,23 @@ The local file `catalog/apps.toml` still works with no broker configured. When a
 
 ## Categories, GitHub import, and summaries
 
-App details use a category dropdown. **MANAGE CATEGORIES** stores shared categories in the broker database. Add, rename, or remove a category there; rename updates assigned entries and removal clears their category without hiding the apps.
+App details use a category dropdown with parent/subcategory paths, such as **Hardware › Electronics**. Choose a parent in **MANAGE CATEGORIES** to add or move subcategories. Renaming a parent updates the branch and its app assignments; removing a parent removes its subcategories and clears their assignments. **MANAGE CATEGORIES** stores shared categories in the broker database. Add, rename, or remove a category there; rename updates assigned entries and removal clears their category without hiding the apps.
 
 Paste a GitHub link in App details to populate the canonical `owner/repo`, homepage, slug ID, and display name. New `stat_tracker` repositories become `stat-tracker` IDs and “Stat Tracker” display names. Existing IDs and custom display names are preserved when editing. The repository URL can include `.git`, query parameters, fragments, or a subpage path.
 
 **DRAFT SUMMARY FROM GITHUB** fetches the description and README introduction through an admin-only broker endpoint. Review the suggestion or choose the README introduction, edit the multiline summary, then save separately. These are source-assisted drafts, not AI rewrites. A server release token is required for private repository sources. The token stays on the broker.
+
+## Status stamps and supported projects
+
+The **Project stamp** dropdown on each admin row saves immediately. **Project status** in App details also applies a colored stamp when the details are saved. **MANAGE STATUS STAMPS** adds labels, renames/recolors selected stamps, or removes them. Defaults are Released (green), In development (amber), and Seeking funding for prototype (cyan). Stamp configuration is shared in SQLite. Renaming/recoloring updates assigned cards after refresh; removing a stamp clears assignments. Stamps do not alter listing, access, or download availability.
+
+**SUPPORTED PROJECTS** is a separate launcher page. Admins use **MANAGE SUPPORTED PROJECTS** to add, edit, show/hide, or remove external project cards. These use the existing authorized catalog backend with `kind = "supported"`, a required HTTPS homepage, and public visibility. They show **VISIT PROJECT**, not software install/update actions. Supported-project IDs share the app ID namespace; changing a listing's kind through an existing ID is rejected.
+
+Cards also show up to three GitHub language badges, sorted by source-code byte counts. Public language lookups use the unauthenticated GitHub budget; private lookups require access through the broker. Language badges are independent of project-status stamps.
+
+## App updates
+
+**REFRESH** looks up the latest release; installed apps get **UPDATE** when a newer compatible build is available. Portable apps are downloaded, checksum-verified, staged, and swapped into the managed install. Installer packages are handed to the OS for user interaction. This does not silently update arbitrary system installations. The separate launcher self-updater in PR #2 remains outside this branch.
 
 ## Module map
 

@@ -73,6 +73,35 @@ impl CentralClient {
         self.send("GET", "v1/catalog", self.token.is_some(), None)
     }
 
+    pub fn languages(&self, id: &str) -> Result<Vec<String>, String> {
+        self.send("GET", &format!("v1/apps/{id}/languages"), true, None)
+    }
+
+    pub fn set_project_status(&self, id: &str, status: Option<&str>) -> Result<(), String> {
+        let _: serde_json::Value = self.send(
+            "POST",
+            &format!("v1/admin/apps/{id}/status"),
+            true,
+            Some(serde_json::json!({ "project_status": status })),
+        )?;
+        Ok(())
+    }
+
+    pub fn status_stamps(
+        &self,
+        change: Option<&nexus_protocol::StatusStampChange>,
+    ) -> Result<Vec<nexus_protocol::StatusStamp>, String> {
+        match change {
+            Some(change) => self.send(
+                "POST",
+                "v1/admin/status-stamps",
+                true,
+                Some(serde_json::to_value(change).map_err(|err| err.to_string())?),
+            ),
+            None => self.send("GET", "v1/admin/status-stamps", true, None),
+        }
+    }
+
     pub fn categories(&self) -> Result<Vec<String>, String> {
         self.send("GET", "v1/admin/categories", true, None)
     }

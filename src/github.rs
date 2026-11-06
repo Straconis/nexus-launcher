@@ -165,6 +165,33 @@ pub fn fetch_latest(
     (interpret(status, rate.remaining, &body), rate)
 }
 
+pub fn fetch_languages(
+    client: &reqwest::blocking::Client,
+    repo: &str,
+) -> (Vec<String>, RateSnapshot) {
+    if !crate::catalog::is_github_repo(repo) {
+        return (Vec::new(), RateSnapshot::default());
+    }
+    let response = client
+        .get(format!("https://api.github.com/repos/{repo}/languages"))
+        .timeout(Duration::from_secs(15))
+        .header(ACCEPT, "application/vnd.github+json")
+        .send();
+    let Ok(response) = response else {
+        return (Vec::new(), RateSnapshot::default());
+    };
+    let rate = RateSnapshot::from_headers(response.headers());
+    if !response.status().is_success() {
+        return (Vec::new(), rate);
+    }
+    let counts = response
+        .text()
+        .ok()
+        .and_then(|body| serde_json::from_str(&body).ok())
+        .unwrap_or_default();
+    (nexus_protocol::top_languages(counts), rate)
+}
+
 pub fn releases_url(repo: &str) -> Result<String, String> {
     if !crate::catalog::is_github_repo(repo) {
         return Err(format!("invalid GitHub repo '{repo}'"));

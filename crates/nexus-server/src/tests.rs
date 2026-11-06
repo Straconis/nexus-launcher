@@ -301,7 +301,9 @@ async fn access_control_blocks_anonymous_and_cross_user_downloads() {
         Some(json!(UpsertApp {
             id: "tool".into(),
             name: "Private Tool".into(),
+            kind: "app".into(),
             summary: "Entitled build".into(),
+            project_status: None,
             category: Some("tools".into()),
             homepage: Some("https://example.com/tool".into()),
             repo: Some("Straconis/private-tool".into()),
@@ -613,4 +615,160 @@ async fn category_management_requires_admin_and_updates_assigned_apps() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn custom_status_stamps_and_supported_project_round_trip() {
+    let harness = harness();
+    let app = &harness.app;
+    let (status, _) = send(app, "GET", "/v1/admin/status-stamps", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    harness.fake.set_user(7, "steve");
+    let (admin, _) = login(app).await;
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/admin/status-stamps",
+        Some(&admin),
+        Some(json!({"id":"prototype", "name":"Seeking funding for prototype", "color":"#44bbdd"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send(app, "POST", "/v1/admin/apps", Some(&admin), Some(json!({"id":"supported", "name":"Supported project", "kind":"supported", "summary":"A supported project.", "homepage":"https://example.com", "project_status":"prototype", "visibility":"public", "published":true}))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = send(app, "GET", "/v1/catalog", None, None).await;
+    let catalog: Vec<CatalogApp> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(catalog[0].kind, "supported");
+    assert_eq!(catalog[0].status_stamp.as_ref().unwrap().color, "#44bbdd");
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/admin/apps/supported/status",
+        None,
+        Some(json!({"project_status":"released"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/admin/apps/supported/status",
+        Some(&admin),
+        Some(json!({"project_status":"released"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = send(app, "GET", "/v1/catalog", None, None).await;
+    let updated: Vec<CatalogApp> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(updated[0].project_status.as_deref(), Some("released"));
+    assert_eq!(updated[0].homepage.as_deref(), Some("https://example.com/"));
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/admin/apps/supported/status",
+        Some(&admin),
+        Some(json!({"project_status":"prototype"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/admin/status-stamps",
+        Some(&admin),
+        Some(json!({"id":"prototype", "name":"Prototype funding", "color":"#ffaa11"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = send(app, "GET", "/v1/catalog", None, None).await;
+    let catalog: Vec<CatalogApp> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        catalog[0].status_stamp.as_ref().unwrap().name,
+        "Prototype funding"
+    );
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/admin/status-stamps",
+        Some(&admin),
+        Some(json!({"id":"prototype", "name":null, "color":null})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = send(app, "GET", "/v1/catalog", None, None).await;
+    let catalog: Vec<CatalogApp> = serde_json::from_slice(&body).unwrap();
+    assert!(catalog[0].status_stamp.is_none());
+    assert!(catalog[0].project_status.is_none());
+    let (status, _) = send(app, "POST", "/v1/admin/apps", Some(&admin), Some(json!({"id":"invalid", "name":"No link", "kind":"supported", "visibility":"public", "published":true}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[test]
+fn old_catalog_schema_migrates_without_losing_entries() {
+    let path = std::env::temp_dir().join(format!(
+        "nexus-schema-{}-{}.sqlite",
+        std::process::id(),
+        crate::auth::random_id()
+    ));
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE apps(id TEXT PRIMARY KEY,name TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',category TEXT,homepage TEXT,repo TEXT,visibility TEXT NOT NULL,published INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL); INSERT INTO apps(id,name,visibility,updated_at) VALUES ('old','Existing','public','now');").unwrap();
+    }
+    let db = Database::open(&path).unwrap();
+    let entry = db.app("old").unwrap().unwrap();
+    assert_eq!(entry.kind, "app");
+    assert!(entry.project_status.is_none());
+    assert_eq!(db.status_stamps().unwrap().len(), 3);
+    db.change_status_stamp(&nexus_protocol::StatusStampChange {
+        id: "released".into(),
+        name: None,
+        color: None,
+    })
+    .unwrap();
+    drop(db);
+    let db = Database::open(&path).unwrap();
+    assert_eq!(
+        db.status_stamps().unwrap().len(),
+        2,
+        "removed defaults must not reappear"
+    );
+    drop(db);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn category_subtrees_rename_and_reject_cycles() {
+    // Use a separate database because this test exercises persistence directly.
+    let path = std::env::temp_dir().join(format!(
+        "nexus-categories-{}.sqlite",
+        crate::auth::random_id()
+    ));
+    let db = Database::open(&path).unwrap();
+    db.change_category("", Some("Hardware / Electronics / Controllers"))
+        .unwrap();
+    assert_eq!(
+        db.categories().unwrap(),
+        [
+            "Hardware",
+            "Hardware / Electronics",
+            "Hardware / Electronics / Controllers"
+        ]
+    );
+    assert!(db
+        .change_category("Hardware", Some("Hardware / Electronics / Hardware"))
+        .is_err());
+    db.change_category("Hardware", Some("Devices")).unwrap();
+    assert_eq!(
+        db.categories().unwrap(),
+        [
+            "Devices",
+            "Devices / Electronics",
+            "Devices / Electronics / Controllers"
+        ]
+    );
+    db.change_category("Devices / Electronics", None).unwrap();
+    assert_eq!(db.categories().unwrap(), ["Devices"]);
+    drop(db);
+    std::fs::remove_file(path).unwrap();
 }

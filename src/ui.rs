@@ -38,6 +38,7 @@ pub fn run(catalog_path: PathBuf) -> eframe::Result {
 
 struct NexusApp {
     catalog_path: PathBuf,
+    show_supported: bool,
     cards: Vec<Card>,
     catalog_error: Option<String>,
     rate: Option<RateSnapshot>,
@@ -58,6 +59,8 @@ struct Card {
     entry: AppEntry,
     phase: Phase,
     private_download: bool,
+    languages: Vec<String>,
+    status_stamp: Option<nexus_protocol::StatusStamp>,
 }
 
 enum Phase {
@@ -97,6 +100,22 @@ enum Job {
 }
 
 enum CentralJob {
+    SetProjectStatus {
+        server_url: String,
+        token: String,
+        id: String,
+        status: Option<String>,
+    },
+    StatusStamps {
+        server_url: String,
+        token: String,
+        change: Option<nexus_protocol::StatusStampChange>,
+    },
+    Languages {
+        server_url: String,
+        token: String,
+        id: String,
+    },
     Categories {
         server_url: String,
         token: String,
@@ -175,6 +194,10 @@ enum CentralJob {
 }
 
 enum Event {
+    Languages {
+        id: String,
+        names: Vec<String>,
+    },
     Rate(RateSnapshot),
     Fetched {
         id: String,
@@ -193,6 +216,7 @@ enum Event {
 }
 
 enum CentralEvent {
+    StatusStamps(Result<Vec<nexus_protocol::StatusStamp>, String>),
     Categories(Result<Vec<String>, String>),
     RepoPreview {
         repo: String,
@@ -212,6 +236,7 @@ enum CentralEvent {
 }
 
 enum UiAction {
+    ShowPage(bool),
     Refresh,
     Retry(String),
     Install { id: String, confirmed: bool },
@@ -249,6 +274,7 @@ impl NexusApp {
             .expect("spawn network thread");
         let mut app = Self {
             catalog_path,
+            show_supported: false,
             cards: Vec::new(),
             catalog_error: None,
             rate: None,
@@ -297,6 +323,9 @@ impl NexusApp {
             .cards
             .iter()
             .filter_map(|card| {
+                if card.entry.kind == "supported" {
+                    return None;
+                }
                 let repo = card.entry.repo.clone()?;
                 if matches!(card.phase, Phase::Loading)
                     && !card.private_download
@@ -331,6 +360,11 @@ impl NexusApp {
 
     fn apply(&mut self, event: Event) {
         match event {
+            Event::Languages { id, names } => {
+                if let Some(card) = self.cards.iter_mut().find(|card| card.entry.id == id) {
+                    card.languages = names;
+                }
+            }
             Event::Rate(rate) => {
                 self.rate = Some(rate);
                 self.recompute_banner();
@@ -439,6 +473,7 @@ impl NexusApp {
 
     fn handle(&mut self, action: UiAction) {
         match action {
+            UiAction::ShowPage(supported) => self.show_supported = supported,
             UiAction::Refresh => self.reload(),
             UiAction::Retry(id) => self.retry(&id),
             UiAction::Install { id, confirmed } => self.begin_install(&id, confirmed),
@@ -623,10 +658,17 @@ impl Card {
             Availability::NotOnPlatform => Phase::NotOnPlatform,
             Availability::Fetch => Phase::Loading,
         };
+        let status_stamp = entry.project_status.as_ref().and_then(|id| {
+            nexus_protocol::default_status_stamps()
+                .into_iter()
+                .find(|stamp| &stamp.id == id)
+        });
         Self {
             entry,
             phase,
+            status_stamp,
             private_download: false,
+            languages: Vec::new(),
         }
     }
 
@@ -666,6 +708,18 @@ impl eframe::App for NexusApp {
                 }
                 ui.add_enabled_ui(!modal_open, |ui| {
                     actions.extend(self.header(ui));
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(!self.show_supported, "TOOLS").clicked() {
+                            actions.push(UiAction::ShowPage(false));
+                        }
+                        if ui
+                            .selectable_label(self.show_supported, "SUPPORTED PROJECTS")
+                            .clicked()
+                        {
+                            actions.push(UiAction::ShowPage(true));
+                        }
+                    });
+                    ui.add_space(8.0);
                     actions.extend(self.central_actions(ui));
                     actions.extend(self.banners(ui));
                     actions.extend(self.grid(ui));
@@ -775,8 +829,20 @@ impl NexusApp {
 
     fn grid(&self, ui: &mut egui::Ui) -> Vec<UiAction> {
         let mut actions = Vec::new();
-        if self.cards.is_empty() {
-            ui.label(RichText::new("No apps in the catalog.").color(MUTED));
+        let cards: Vec<_> = self
+            .cards
+            .iter()
+            .filter(|card| (card.entry.kind == "supported") == self.show_supported)
+            .collect();
+        if cards.is_empty() {
+            ui.label(
+                RichText::new(if self.show_supported {
+                    "No supported projects are listed yet."
+                } else {
+                    "No apps in the catalog."
+                })
+                .color(MUTED),
+            );
             return actions;
         }
         let gap = 14.0;
@@ -792,9 +858,9 @@ impl NexusApp {
                     .max_col_width(card_w)
                     .spacing(Vec2::new(gap, gap))
                     .show(ui, |ui| {
-                        for (index, card) in self.cards.iter().enumerate() {
+                        for (index, card) in cards.iter().enumerate() {
                             actions.extend(self.card(ui, card, card_w));
-                            if (index + 1) % cols == 0 || index + 1 == self.cards.len() {
+                            if (index + 1) % cols == 0 || index + 1 == cards.len() {
                                 ui.end_row();
                             }
                         }
@@ -820,7 +886,7 @@ impl NexusApp {
                         ui.set_min_height(328.0);
                         if let Some(category) = &card.entry.category {
                             ui.label(
-                                RichText::new(category.to_uppercase())
+                                RichText::new(category.replace(" / ", " › ").to_uppercase())
                                     .family(theme::orbitron())
                                     .size(11.0)
                                     .color(ACCENT),
@@ -832,6 +898,42 @@ impl NexusApp {
                                 .size(18.0)
                                 .color(TEXT),
                         );
+                        if let Some(stamp) = &card.status_stamp {
+                            let color = stamp_color(&stamp.color);
+                            Frame::new()
+                                .fill(color.gamma_multiply(0.12))
+                                .stroke(Stroke::new(1.5_f32, color))
+                                .corner_radius(3)
+                                .inner_margin(egui::Margin::symmetric(8, 4))
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        RichText::new(stamp.name.to_uppercase())
+                                            .strong()
+                                            .size(11.0)
+                                            .color(color),
+                                    );
+                                });
+                        }
+                        if !card.languages.is_empty() {
+                            ui.horizontal_wrapped(|ui| {
+                                for language in &card.languages {
+                                    Frame::new()
+                                        .fill(BG)
+                                        .stroke(Stroke::new(1.0_f32, BORDER))
+                                        .corner_radius(5)
+                                        .inner_margin(egui::Margin::symmetric(6, 2))
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                RichText::new(language).size(11.0).color(MUTED),
+                                            );
+                                        })
+                                        .response
+                                        .on_hover_text(
+                                            "GitHub source languages, ordered by code size.",
+                                        );
+                                }
+                            });
+                        }
                         ui.add_space(2.0);
                         ui.label(
                             RichText::new(if card.entry.summary.is_empty() {
@@ -852,6 +954,22 @@ impl NexusApp {
 
     fn card_body(&self, ui: &mut egui::Ui, card: &Card) -> Vec<UiAction> {
         let mut actions = Vec::new();
+        if card.entry.kind == "supported" {
+            if card.entry.id == "s3d-labs" {
+                let logo = branding_texture(
+                    ui.ctx(),
+                    "supported-s3d-labs",
+                    include_bytes!("../assets/branding/s3d-labs-logo.png"),
+                );
+                ui.add(egui::Image::from_texture(&logo).max_size(Vec2::splat(90.0)));
+            }
+            if let Some(url) = &card.entry.homepage {
+                if cta(ui, "VISIT PROJECT", CtaKind::Primary, ui.available_width()).clicked() {
+                    actions.push(UiAction::OpenUrl(url.clone()));
+                }
+            }
+            return actions;
+        }
         match &card.phase {
             Phase::Loading => {
                 ui.label(
@@ -1051,6 +1169,11 @@ impl NexusApp {
                     });
                 }
                 central_panel::CentralAction::RefreshAdmin => {
+                    self.send_central(CentralJob::StatusStamps {
+                        server_url: server_url.clone(),
+                        token: authed(&token),
+                        change: None,
+                    });
                     self.send_central(CentralJob::Categories {
                         server_url: server_url.clone(),
                         token: authed(&token),
@@ -1059,6 +1182,13 @@ impl NexusApp {
                     self.send_central(CentralJob::AdminList {
                         server_url,
                         token: authed(&token),
+                    });
+                }
+                central_panel::CentralAction::ChangeStatusStamp(change) => {
+                    self.send_central(CentralJob::StatusStamps {
+                        server_url,
+                        token: authed(&token),
+                        change: Some(change),
                     });
                 }
                 central_panel::CentralAction::ChangeCategory(change) => {
@@ -1075,11 +1205,25 @@ impl NexusApp {
                         repo,
                     });
                 }
+                central_panel::CentralAction::SetProjectStatus { id, status } => {
+                    self.send_central(CentralJob::SetProjectStatus {
+                        server_url,
+                        token: authed(&token),
+                        id,
+                        status,
+                    });
+                }
                 central_panel::CentralAction::SaveApp => {
                     let app = nexus_protocol::UpsertApp {
                         id: self.central.draft_id.clone(),
                         name: self.central.draft_name.clone(),
+                        kind: if self.central.manage_supported {
+                            "supported".into()
+                        } else {
+                            "app".into()
+                        },
                         summary: self.central.draft_summary.clone(),
+                        project_status: self.central.draft_project_status.clone(),
                         category: Some(self.central.draft_category.clone()),
                         homepage: Some(self.central.draft_homepage.clone()),
                         repo: Some(self.central.draft_repo.clone()),
@@ -1147,6 +1291,31 @@ impl NexusApp {
 
     fn apply_central(&mut self, event: CentralEvent) {
         match event {
+            CentralEvent::StatusStamps(result) => match result {
+                Ok(stamps) => {
+                    if self
+                        .central
+                        .draft_project_status
+                        .as_ref()
+                        .is_some_and(|id| !stamps.iter().any(|stamp| &stamp.id == id))
+                    {
+                        self.central.draft_project_status = None;
+                    }
+                    self.central.status_stamps = stamps;
+                    self.central.message = Some("Status stamps updated.".into());
+                    if let Some(server_url) = self.central.server_url.clone() {
+                        self.send_central(CentralJob::AdminList {
+                            server_url: server_url.clone(),
+                            token: self.central.token.clone().unwrap_or_default(),
+                        });
+                        self.send_central(CentralJob::Catalog {
+                            server_url,
+                            token: self.central.token.clone(),
+                        });
+                    }
+                }
+                Err(message) => self.central.message = Some(message),
+            },
             CentralEvent::Categories(result) => match result {
                 Ok(categories) => {
                     if !self.central.draft_category.is_empty()
@@ -1310,7 +1479,9 @@ impl NexusApp {
             let entry = AppEntry {
                 id: app.id,
                 name: app.name,
+                kind: app.kind,
                 summary: app.summary,
+                project_status: app.project_status,
                 repo: if private_download { None } else { app.repo },
                 homepage: app.homepage,
                 category: app.category,
@@ -1331,6 +1502,8 @@ impl NexusApp {
                 entry,
                 phase,
                 private_download,
+                languages: Vec::new(),
+                status_stamp: app.status_stamp,
             });
         }
         self.queue_fetches();
@@ -1351,6 +1524,11 @@ impl NexusApp {
             .map(|card| card.entry.id.clone())
             .collect();
         for id in ids {
+            self.send_central(CentralJob::Languages {
+                server_url: server_url.clone(),
+                token: token.clone(),
+                id: id.clone(),
+            });
             self.send_central(CentralJob::Release {
                 server_url: server_url.clone(),
                 token: token.clone(),
@@ -1489,6 +1667,15 @@ impl NexusApp {
                 });
         }
         actions
+    }
+}
+
+fn stamp_color(hex: &str) -> Color32 {
+    let bytes = hex::decode(hex.trim_start_matches('#')).unwrap_or_default();
+    if bytes.len() == 3 {
+        Color32::from_rgb(bytes[0], bytes[1], bytes[2])
+    } else {
+        ACCENT
     }
 }
 
@@ -1668,6 +1855,33 @@ fn report_client_failure(events: &Sender<Event>, job: Job, message: &str) {
 fn central_job(job: CentralJob, events: &Sender<Event>) {
     let event =
         match job {
+            CentralJob::SetProjectStatus {
+                server_url,
+                token,
+                id,
+                status,
+            } => CentralEvent::Note(central_call(&server_url, Some(token), |client| {
+                client
+                    .set_project_status(&id, status.as_deref())
+                    .map(|_| "Project stamp saved.".into())
+            })),
+            CentralJob::StatusStamps {
+                server_url,
+                token,
+                change,
+            } => CentralEvent::StatusStamps(central_call(&server_url, Some(token), |client| {
+                client.status_stamps(change.as_ref())
+            })),
+            CentralJob::Languages {
+                server_url,
+                token,
+                id,
+            } => {
+                let names = central_call(&server_url, Some(token), |client| client.languages(&id))
+                    .unwrap_or_default();
+                let _ = events.send(Event::Languages { id, names });
+                return;
+            }
             CentralJob::Categories {
                 server_url,
                 token,
@@ -1888,6 +2102,17 @@ fn fetch_all(client: &reqwest::blocking::Client, targets: &[FetchTarget], events
         if let FetchOutcome::RateLimited(message) = &outcome {
             blocked = Some(message.clone());
         }
+        if blocked.is_none() {
+            let (names, rate) = github::fetch_languages(client, &target.repo);
+            if rate.remaining == Some(0) {
+                blocked = Some("GitHub API rate limit reached. Try again after the reset.".into());
+            }
+            let _ = events.send(Event::Rate(rate));
+            let _ = events.send(Event::Languages {
+                id: target.id.clone(),
+                names,
+            });
+        }
         let _ = events.send(Event::Fetched {
             id: target.id.clone(),
             outcome,
@@ -1936,6 +2161,7 @@ mod tests {
         let (_, events) = mpsc::channel();
         NexusApp {
             catalog_path: PathBuf::from("catalog/apps.toml"),
+            show_supported: false,
             cards: Vec::new(),
             catalog_error: None,
             rate: None,
@@ -1954,11 +2180,39 @@ mod tests {
     }
 
     #[test]
+    fn supported_projects_render_as_links_on_their_own_page() {
+        let mut app = app();
+        let catalog = catalog::parse_catalog("[[app]]\nid='support'\nname='Supported Test'\nkind='supported'\nhomepage='https://example.com'\nsummary='A project supported by Straconis Software.'").unwrap();
+        app.cards = catalog.apps.into_iter().map(Card::from_entry).collect();
+        app.show_supported = true;
+        let ctx = egui::Context::default();
+        theme::apply(&ctx);
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                app.grid(ui);
+            });
+        });
+        let has = |label: &str| {
+            output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == label))
+        };
+        assert!(has("SUPPORTED TEST"));
+        assert!(has("VISIT PROJECT"));
+        assert!(!has("COMING SOON"));
+        assert!(!has("INSTALL"));
+    }
+
+    #[test]
     fn grid_cards_stack_text_vertically_and_stay_inside_window() {
         for width in [780.0, 1120.0] {
             let mut app = app();
             let catalog = catalog::parse_catalog("[[app]]\nid='one'\nname='Tool One'\nsummary='Capture and organize screenshots for your projects.'\n[[app]]\nid='two'\nname='Tool Two'\nsummary='Review sequences of captured images.'").unwrap();
             app.cards = catalog.apps.into_iter().map(Card::from_entry).collect();
+            app.cards[0].languages = vec!["Python".into(), "Shell".into()];
+            app.cards[0].status_stamp = Some(nexus_protocol::StatusStamp {
+                id: "development".into(),
+                name: "In development".into(),
+                color: "#f2bc56".into(),
+            });
             let ctx = egui::Context::default();
             theme::apply(&ctx);
             let mut output = None;
@@ -1990,6 +2244,9 @@ mod tests {
                     .unwrap()
             };
             let name = text("TOOL ONE");
+            assert!(text("IN DEVELOPMENT").pos.y > name.pos.y);
+            assert!(text("Python").pos.y > name.pos.y);
+            assert!(text("Shell").pos.y > name.pos.y);
             let summary = text("Capture and organize screenshots for your projects.");
             assert!(summary.pos.y > name.pos.y);
             assert!((summary.pos.x - name.pos.x).abs() < 2.0);
@@ -2013,7 +2270,10 @@ mod tests {
         app.merge_central(vec![CatalogApp {
             id: "tool".into(),
             name: "Central Tool".into(),
+            kind: "app".into(),
             summary: String::new(),
+            project_status: None,
+            status_stamp: None,
             category: None,
             homepage: None,
             repo: None,

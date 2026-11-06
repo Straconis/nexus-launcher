@@ -31,7 +31,9 @@ pub struct FlowRow {
 pub struct AppRow {
     pub id: String,
     pub name: String,
+    pub kind: String,
     pub summary: String,
+    pub project_status: Option<String>,
     pub category: Option<String>,
     pub homepage: Option<String>,
     pub repo: Option<String>,
@@ -89,6 +91,36 @@ impl Database {
             ",
         )
         .map_err(|err| err.to_string())?;
+        let has_status: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('apps') WHERE name='project_status')", [], |row| row.get(0)).map_err(|err| err.to_string())?;
+        if !has_status {
+            conn.execute("ALTER TABLE apps ADD COLUMN project_status TEXT", [])
+                .map_err(|err| err.to_string())?;
+        }
+        let has_kind: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('apps') WHERE name='kind')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|err| err.to_string())?;
+        if !has_kind {
+            conn.execute(
+                "ALTER TABLE apps ADD COLUMN kind TEXT NOT NULL DEFAULT 'app'",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+        }
+        let has_stamps: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='status_stamps')", [], |row| row.get(0)).map_err(|err| err.to_string())?;
+        if !has_stamps {
+            conn.execute_batch("CREATE TABLE status_stamps(id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL);").map_err(|err| err.to_string())?;
+            for stamp in nexus_protocol::default_status_stamps() {
+                conn.execute(
+                    "INSERT INTO status_stamps(id,name,color) VALUES (?,?,?)",
+                    params![stamp.id, stamp.name, stamp.color],
+                )
+                .map_err(|err| err.to_string())?;
+            }
+        }
         #[cfg(unix)]
         tighten_db_file(path);
         Ok(Self {
@@ -204,8 +236,8 @@ impl Database {
 
     pub fn upsert_app(&self, app: &AppRow, now: &str) -> Result<(), ApiFailure> {
         self.lock()?.execute(
-            "INSERT INTO apps (id, name, summary, category, homepage, repo, visibility, published, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "INSERT INTO apps (id, name, summary, category, homepage, repo, visibility, published, updated_at, project_status, kind)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 summary = excluded.summary,
@@ -214,7 +246,9 @@ impl Database {
                 repo = excluded.repo,
                 visibility = excluded.visibility,
                 published = excluded.published,
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at,
+                project_status = excluded.project_status,
+                kind = excluded.kind",
             params![
                 app.id,
                 app.name,
@@ -224,10 +258,24 @@ impl Database {
                 app.repo,
                 app.visibility.as_str(),
                 i64::from(app.published),
-                now
+                now,
+                app.project_status,
+                app.kind
             ],
         )?;
         Ok(())
+    }
+
+    pub fn set_project_status(
+        &self,
+        id: &str,
+        status: Option<&str>,
+        now: &str,
+    ) -> Result<bool, ApiFailure> {
+        Ok(self.lock()?.execute(
+            "UPDATE apps SET project_status=?,updated_at=? WHERE id=?",
+            params![status, now, id],
+        )? == 1)
     }
 
     pub fn set_published(&self, id: &str, published: bool, now: &str) -> Result<bool, ApiFailure> {
@@ -248,7 +296,7 @@ impl Database {
     pub fn app(&self, id: &str) -> Result<Option<AppRow>, ApiFailure> {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, summary, category, homepage, repo, visibility, published FROM apps WHERE id = ?1",
+            "SELECT id, name, summary, category, homepage, repo, visibility, published, project_status, kind FROM apps WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
@@ -260,7 +308,7 @@ impl Database {
     pub fn apps(&self) -> Result<Vec<AppRow>, ApiFailure> {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, summary, category, homepage, repo, visibility, published
+            "SELECT id, name, summary, category, homepage, repo, visibility, published, project_status, kind
              FROM apps ORDER BY id",
         )?;
         let mut rows = stmt.query([])?;
@@ -339,6 +387,8 @@ fn read_app(row: &rusqlite::Row<'_>) -> Result<AppRow, rusqlite::Error> {
         repo: row.get(5)?,
         visibility,
         published: row.get::<_, i64>(7)? != 0,
+        project_status: row.get(8)?,
+        kind: row.get(9)?,
     })
 }
 
@@ -347,7 +397,9 @@ impl From<&AppRow> for AdminApp {
         Self {
             id: app.id.clone(),
             name: app.name.clone(),
+            kind: app.kind.clone(),
             summary: app.summary.clone(),
+            project_status: app.project_status.clone(),
             category: app.category.clone(),
             homepage: app.homepage.clone(),
             repo: app.repo.clone(),
@@ -375,27 +427,116 @@ impl Database {
         let rows = stmt
             .query_map([], |row| row.get(0))?
             .collect::<Result<Vec<String>, _>>()?;
-        Ok(rows)
+        let mut expanded = std::collections::BTreeSet::new();
+        for name in rows {
+            let mut path = String::new();
+            for part in name.split(" / ") {
+                if !path.is_empty() {
+                    path.push_str(" / ");
+                }
+                path.push_str(part);
+                expanded.insert(path.clone());
+            }
+        }
+        Ok(expanded.into_iter().collect())
     }
 
     pub fn change_category(&self, name: &str, replacement: Option<&str>) -> Result<(), ApiFailure> {
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         tx.execute_batch("CREATE TABLE IF NOT EXISTS categories (name TEXT PRIMARY KEY);")?;
+        let prefix = format!("{name} / ");
         if let Some(new_name) = replacement {
+            if !name.is_empty() && new_name.starts_with(&prefix) {
+                return Err(ApiFailure::new(
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "invalid_parent",
+                    "a category cannot be moved inside itself",
+                ));
+            }
+            let mut path = String::new();
+            for segment in new_name.split(" / ") {
+                if !path.is_empty() {
+                    path.push_str(" / ");
+                }
+                path.push_str(segment);
+                tx.execute("INSERT OR IGNORE INTO categories(name) VALUES (?)", [&path])?;
+            }
+            if !name.is_empty() && name != new_name {
+                let children = {
+                    let mut stmt = tx.prepare("SELECT name FROM categories WHERE substr(name,1,?)=? UNION SELECT category FROM apps WHERE substr(category,1,?)=?")?;
+                    let mut rows = stmt.query(params![
+                        prefix.chars().count(),
+                        prefix,
+                        prefix.chars().count(),
+                        prefix
+                    ])?;
+                    let mut children = Vec::new();
+                    while let Some(row) = rows.next()? {
+                        children.push(row.get::<_, String>(0)?);
+                    }
+                    children
+                };
+                for child in children {
+                    let renamed = format!("{}{}", new_name, &child[name.len()..]);
+                    tx.execute(
+                        "INSERT OR IGNORE INTO categories(name) VALUES (?)",
+                        [&renamed],
+                    )?;
+                    tx.execute("DELETE FROM categories WHERE name=?", [&child])?;
+                }
+                tx.execute("UPDATE apps SET category = ? || substr(category,?) WHERE substr(category,1,?)=?", params![new_name,name.chars().count()+1,prefix.chars().count(),prefix])?;
+                tx.execute(
+                    "UPDATE apps SET category=? WHERE category=?",
+                    params![new_name, name],
+                )?;
+                tx.execute("DELETE FROM categories WHERE name=?", [name])?;
+            }
+        } else {
             tx.execute(
-                "INSERT OR IGNORE INTO categories(name) VALUES (?)",
-                [new_name],
+                "UPDATE apps SET category=NULL WHERE category=? OR substr(category,1,?)=?",
+                params![name, prefix.chars().count(), prefix],
+            )?;
+            tx.execute(
+                "DELETE FROM categories WHERE name=? OR substr(name,1,?)=?",
+                params![name, prefix.chars().count(), prefix],
             )?;
         }
-        if !name.is_empty() {
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+impl Database {
+    pub fn status_stamps(&self) -> Result<Vec<nexus_protocol::StatusStamp>, ApiFailure> {
+        let conn = self.lock()?;
+        let mut stmt =
+            conn.prepare("SELECT id,name,color FROM status_stamps ORDER BY name COLLATE NOCASE")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(nexus_protocol::StatusStamp {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    color: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+    pub fn change_status_stamp(
+        &self,
+        change: &nexus_protocol::StatusStampChange,
+    ) -> Result<(), ApiFailure> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        if let Some(name) = &change.name {
+            tx.execute("INSERT INTO status_stamps(id,name,color) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,color=excluded.color", params![change.id,name,change.color.as_deref().unwrap_or("#ff244e")])?;
+        } else {
             tx.execute(
-                "UPDATE apps SET category = ? WHERE category = ?",
-                params![replacement, name],
+                "UPDATE apps SET project_status=NULL WHERE project_status=?",
+                [&change.id],
             )?;
-            if replacement != Some(name) {
-                tx.execute("DELETE FROM categories WHERE name = ?", [name])?;
-            }
+            tx.execute("DELETE FROM status_stamps WHERE id=?", [&change.id])?;
         }
         tx.commit()?;
         Ok(())

@@ -11,8 +11,12 @@ use thiserror::Error;
 pub struct AppEntry {
     pub id: String,
     pub name: String,
+    #[serde(default = "nexus_protocol::default_project_kind")]
+    pub kind: String,
     #[serde(default)]
     pub summary: String,
+    #[serde(default)]
+    pub project_status: Option<String>,
     /// GitHub `owner/name`. Absent means the card stays Coming soon.
     #[serde(default)]
     pub repo: Option<String>,
@@ -199,6 +203,18 @@ fn validate(catalog: &Catalog) -> Result<(), CatalogError> {
         if app.name.is_empty() {
             return Err(CatalogError::Invalid(format!(
                 "app '{}' is missing a name",
+                app.id
+            )));
+        }
+        if app.project_status.as_ref().is_some_and(|status| {
+            status.is_empty()
+                || status.len() > 64
+                || !status
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        }) {
+            return Err(CatalogError::Invalid(format!(
+                "app '{}' has an invalid project_status",
                 app.id
             )));
         }

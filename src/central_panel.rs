@@ -14,6 +14,8 @@ pub enum CentralAction {
     SignOut,
     RefreshAdmin,
     SaveApp,
+    SetProjectStatus { id: String, status: Option<String> },
+    ChangeStatusStamp(nexus_protocol::StatusStampChange),
     ChangeCategory(nexus_protocol::CategoryChange),
     RepoPreview(String),
     TogglePublished { id: String, published: bool },
@@ -34,21 +36,29 @@ pub struct CentralPanel {
     pub next_poll: Option<Instant>,
     pub catalog: Vec<CatalogApp>,
     pub admin_open: bool,
+    pub manage_supported: bool,
     help_open: bool,
     help_query: String,
     editor_open: bool,
     pub admin_apps: Vec<AdminApp>,
     pub grants: Vec<Grant>,
+    pub status_stamps: Vec<nexus_protocol::StatusStamp>,
+    status_open: bool,
+    status_selected: String,
+    status_name: String,
+    status_color: egui::Color32,
     pub categories: Vec<String>,
     pub summary_preview: Option<nexus_protocol::RepoPreview>,
     category_open: bool,
     category_selected: String,
     category_name: String,
+    category_parent: String,
     repo_input: String,
     editing_existing: bool,
     pub draft_id: String,
     pub draft_name: String,
     pub draft_summary: String,
+    pub draft_project_status: Option<String>,
     pub draft_repo: String,
     pub draft_category: String,
     pub draft_homepage: String,
@@ -71,21 +81,29 @@ impl CentralPanel {
             next_poll: None,
             catalog: Vec::new(),
             admin_open: false,
+            manage_supported: false,
             help_open: false,
             help_query: String::new(),
             editor_open: false,
             admin_apps: Vec::new(),
             grants: Vec::new(),
+            status_stamps: nexus_protocol::default_status_stamps(),
+            status_open: false,
+            status_selected: String::new(),
+            status_name: String::new(),
+            status_color: ACCENT,
             categories: Vec::new(),
             summary_preview: None,
             category_open: false,
             category_selected: String::new(),
             category_name: String::new(),
+            category_parent: String::new(),
             repo_input: String::new(),
             editing_existing: false,
             draft_id: String::new(),
             draft_name: String::new(),
             draft_summary: String::new(),
+            draft_project_status: None,
             draft_repo: String::new(),
             draft_category: String::new(),
             draft_homepage: String::new(),
@@ -149,42 +167,87 @@ impl CentralPanel {
             });
         if self.admin_open {
             let mut open = self.admin_open;
-            egui::Window::new("MANAGE APPS")
-                .id(egui::Id::new("central-admin-window-v2"))
-                .collapsible(false)
-                .default_pos([180.0, 140.0])
-                .open(&mut open)
-                .default_size([680.0, 460.0])
-                .resizable(true)
-                .vscroll(true)
-                .show(ui.ctx(), |ui| {
-                    if let Some(message) = &self.message {
-                        ui.label(RichText::new(message).color(ACCENT));
-                        ui.separator();
-                    }
-                    actions.extend(self.admin(ui));
-                });
+            egui::Window::new(if self.manage_supported {
+                "MANAGE SUPPORTED PROJECTS"
+            } else {
+                "MANAGE APPS"
+            })
+            .id(egui::Id::new("central-admin-window-v2"))
+            .collapsible(false)
+            .default_pos([180.0, 140.0])
+            .open(&mut open)
+            .default_size([680.0, 460.0])
+            .resizable(true)
+            .vscroll(true)
+            .show(ui.ctx(), |ui| {
+                if let Some(message) = &self.message {
+                    ui.label(RichText::new(message).color(ACCENT));
+                    ui.separator();
+                }
+                actions.extend(self.admin(ui));
+            });
             self.admin_open = open;
+        }
+        if self.status_open {
+            let mut open = self.status_open;
+            egui::Window::new("MANAGE STATUS STAMPS").open(&mut open).default_width(470.0).vscroll(true).show(ui.ctx(), |ui| {
+                ui.label("Shared status labels and colors. Rename keeps assignments; remove clears the stamp on assigned projects.");
+                for stamp in self.status_stamps.clone() {
+                    if ui.selectable_label(self.status_selected == stamp.id, RichText::new(&stamp.name).color(super::stamp_color(&stamp.color))).clicked() {
+                        self.status_selected = stamp.id; self.status_name = stamp.name; self.status_color = super::stamp_color(&stamp.color);
+                    }
+                }
+                ui.separator();
+                ui.add(egui::TextEdit::singleline(&mut self.status_name).hint_text("Stamp label"));
+                ui.horizontal(|ui| { ui.label("Stamp color"); ui.color_edit_button_srgba(&mut self.status_color); });
+                let color = format!("#{:02x}{:02x}{:02x}", self.status_color.r(), self.status_color.g(), self.status_color.b());
+                ui.horizontal_wrapped(|ui| {
+                    if ui.add_enabled(!self.status_name.trim().is_empty(), egui::Button::new("ADD STAMP")).clicked() {
+                        let id = self.status_name.split(|c: char| !c.is_ascii_alphanumeric()).filter(|v| !v.is_empty()).map(str::to_ascii_lowercase).collect::<Vec<_>>().join("-");
+                        actions.push(CentralAction::ChangeStatusStamp(nexus_protocol::StatusStampChange { id, name: Some(self.status_name.trim().into()), color: Some(color.clone()) }));
+                    }
+                    if ui.add_enabled(!self.status_selected.is_empty() && !self.status_name.trim().is_empty(), egui::Button::new("SAVE SELECTED")).clicked() {
+                        actions.push(CentralAction::ChangeStatusStamp(nexus_protocol::StatusStampChange { id: self.status_selected.clone(), name: Some(self.status_name.trim().into()), color: Some(color) }));
+                    }
+                    if ui.add_enabled(!self.status_selected.is_empty(), egui::Button::new("REMOVE SELECTED")).clicked() {
+                        actions.push(CentralAction::ChangeStatusStamp(nexus_protocol::StatusStampChange { id: self.status_selected.clone(), name: None, color: None }));
+                        self.status_selected.clear();
+                    }
+                });
+                if let Some(message) = &self.message { ui.label(message); }
+            });
+            self.status_open = open;
         }
         if self.category_open {
             let mut open = self.category_open;
             egui::Window::new("MANAGE CATEGORIES").open(&mut open).default_width(430.0).vscroll(true).show(ui.ctx(), |ui| {
-                ui.label("Shared by every admin on this server. Renaming updates assigned apps; removing clears their category.");
+                ui.label("Choose a parent to create or move a subcategory. Rename updates the whole branch. Removing a parent removes its subcategories and clears their assignments.");
                 for name in self.categories.clone() {
-                    if ui.selectable_label(self.category_selected == name, &name).clicked() {
-                        self.category_selected = name.clone(); self.category_name = name;
+                    if ui.selectable_label(self.category_selected == name, name.replace(" / ", " › ")).clicked() {
+                        self.category_selected = name.clone();
+                        let (parent, leaf) = name.rsplit_once(" / ").unwrap_or(("", &name));
+                        self.category_parent = parent.into(); self.category_name = leaf.into();
                     }
                 }
                 ui.separator();
                 ui.add(egui::TextEdit::singleline(&mut self.category_name).hint_text("Category name"));
+                egui::ComboBox::from_id_salt("category-parent").selected_text(if self.category_parent.is_empty() { "No parent (top-level)".into() } else { self.category_parent.replace(" / ", " › ") }).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.category_parent, String::new(), "No parent (top-level)");
+                    for parent in &self.categories {
+                        if parent == &self.category_selected || (!self.category_selected.is_empty() && parent.starts_with(&format!("{} / ",self.category_selected))) { continue; }
+                        ui.selectable_value(&mut self.category_parent, parent.clone(), parent.replace(" / ", " › "));
+                    }
+                });
+                let full_name = if self.category_parent.is_empty() { self.category_name.trim().to_string() } else { format!("{} / {}", self.category_parent,self.category_name.trim()) };
+
                 ui.horizontal_wrapped(|ui| {
                     if ui.add_enabled(!self.category_name.trim().is_empty(), egui::Button::new("ADD CATEGORY")).clicked() {
-                        actions.push(CentralAction::ChangeCategory(nexus_protocol::CategoryChange { name: String::new(), replacement: Some(self.category_name.trim().into()) }));
+                        actions.push(CentralAction::ChangeCategory(nexus_protocol::CategoryChange { name: String::new(), replacement: Some(full_name.clone()) }));
                     }
-                    if ui.add_enabled(!self.category_selected.is_empty() && !self.category_name.trim().is_empty(), egui::Button::new("RENAME SELECTED")).clicked() {
-                        if self.draft_category == self.category_selected { self.draft_category = self.category_name.trim().into(); }
-                        actions.push(CentralAction::ChangeCategory(nexus_protocol::CategoryChange { name: self.category_selected.clone(), replacement: Some(self.category_name.trim().into()) }));
-                        self.category_selected = self.category_name.trim().into();
+                    if ui.add_enabled(!self.category_selected.is_empty() && !self.category_name.trim().is_empty(), egui::Button::new("SAVE NAME / PARENT")).clicked() {
+                        if self.draft_category == self.category_selected { self.draft_category = full_name.clone(); }
+                        actions.push(CentralAction::ChangeCategory(nexus_protocol::CategoryChange { name: self.category_selected.clone(), replacement: Some(full_name.clone()) }));
+                        self.category_selected = full_name.clone();
                     }
                     if ui.add_enabled(!self.category_selected.is_empty(), egui::Button::new("REMOVE SELECTED")).clicked() {
                         actions.push(CentralAction::ChangeCategory(nexus_protocol::CategoryChange { name: self.category_selected.clone(), replacement: None }));
@@ -243,10 +306,18 @@ impl CentralPanel {
                     actions.push(CentralAction::SignOut);
                 }
                 if account.admin && cta(ui, "MANAGE", CtaKind::Primary, 120.0).clicked() {
-                    self.admin_open = !self.admin_open;
+                    self.admin_open = !self.admin_open || self.manage_supported;
+                    self.manage_supported = false;
+                    self.editor_open = false;
                     if self.admin_open {
                         actions.push(CentralAction::RefreshAdmin);
                     }
+                }
+                if account.admin && ui.button("MANAGE SUPPORTED PROJECTS").clicked() {
+                    self.admin_open = true;
+                    self.manage_supported = true;
+                    self.editor_open = false;
+                    actions.push(CentralAction::RefreshAdmin);
                 }
             });
         } else if self.waiting {
@@ -287,22 +358,37 @@ impl CentralPanel {
         let mut actions = Vec::new();
         let mut show_editor = false;
         let mut show_grants = false;
-        ui.heading("Launcher listings");
+        ui.heading(if self.manage_supported {
+            "Supported project listings"
+        } else {
+            "Launcher listings"
+        });
         ui.label("Choose which apps appear in the launcher. Public access and listing are separate settings.");
         ui.horizontal_wrapped(|ui| {
-            if ui.button("ADD APP").clicked() {
+            if ui
+                .button(if self.manage_supported {
+                    "ADD PROJECT"
+                } else {
+                    "ADD APP"
+                })
+                .clicked()
+            {
                 self.editor_open = true;
                 show_editor = true;
                 self.draft_id.clear();
                 self.draft_name.clear();
                 self.draft_repo.clear();
                 self.draft_summary.clear();
+                self.draft_project_status = None;
                 self.draft_category.clear();
                 self.draft_homepage.clear();
                 self.draft_private = false;
                 self.editing_existing = false;
                 self.repo_input.clear();
                 self.summary_preview = None;
+            }
+            if ui.button("MANAGE STATUS STAMPS").clicked() {
+                self.status_open = true;
             }
             if ui.button("MANAGE CATEGORIES").clicked() {
                 self.category_open = true;
@@ -318,7 +404,13 @@ impl CentralPanel {
             ui.label("No apps loaded. Use RELOAD LIST, or ADD APP to create an entry.");
         }
         ui.separator();
-        for app in self.admin_apps.clone() {
+        for app in self
+            .admin_apps
+            .clone()
+            .into_iter()
+            .filter(|app| (app.kind == "supported") == self.manage_supported)
+            .collect::<Vec<_>>()
+        {
             ui.push_id(&app.id, |ui| {
                 let mark = if app.published { "SHOWN IN LAUNCHER" } else { "HIDDEN FROM LAUNCHER" };
                 ui.label(
@@ -332,6 +424,16 @@ impl CentralPanel {
                     .color(TEXT),
                 );
                 ui.horizontal_wrapped(|ui| {
+                    ui.label("Project stamp (saves immediately):");
+                    let mut selected_status = app.project_status.clone();
+                    let label = selected_status.as_ref().and_then(|id| self.status_stamps.iter().find(|stamp| &stamp.id == id)).map(|stamp| stamp.name.as_str()).unwrap_or("No status");
+                    egui::ComboBox::from_id_salt("quick-project-status").selected_text(label).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut selected_status, None, "No status");
+                        for stamp in &self.status_stamps { ui.selectable_value(&mut selected_status, Some(stamp.id.clone()), RichText::new(&stamp.name).color(super::stamp_color(&stamp.color))); }
+                    });
+                    if selected_status != app.project_status { actions.push(CentralAction::SetProjectStatus { id: app.id.clone(), status: selected_status }); }
+                });
+                ui.horizontal_wrapped(|ui| {
                     if cta(ui, "EDIT", CtaKind::Secondary, 80.0).clicked() {
                         self.editing_existing = true;
                         self.summary_preview = None;
@@ -339,6 +441,7 @@ impl CentralPanel {
                         self.draft_id = app.id.clone();
                         self.draft_name = app.name.clone();
                         self.draft_summary = app.summary.clone();
+                        self.draft_project_status = app.project_status.clone();
                         self.draft_repo = app.repo.clone().unwrap_or_default();
                         self.draft_category = app.category.clone().unwrap_or_default();
                         self.draft_homepage = app.homepage.clone().unwrap_or_default();
@@ -363,7 +466,7 @@ impl CentralPanel {
                     if cta(ui, "DELETE", CtaKind::Secondary, 100.0).clicked() {
                         actions.push(CentralAction::DeleteApp { id: app.id.clone() });
                     }
-                    if cta(ui, "USER ACCESS", CtaKind::Secondary, 130.0).on_hover_text("Choose who can access a restricted app.").clicked() {
+                    if !self.manage_supported && cta(ui, "USER ACCESS", CtaKind::Secondary, 130.0).on_hover_text("Choose who can access a restricted app.").clicked() {
                         self.selected = app.id.clone();
                         self.grants.clear();
                         show_grants = true;
@@ -378,22 +481,28 @@ impl CentralPanel {
         }
         if self.editor_open {
             ui.separator();
-            let heading = ui.heading("App details");
+            let heading = ui.heading(if self.manage_supported {
+                "Supported project details"
+            } else {
+                "App details"
+            });
             if show_editor {
                 heading.scroll_to_me(Some(egui::Align::TOP));
             }
-            ui.label(
+            if !self.manage_supported {
+                ui.label(
                 "Paste a GitHub link to fill the repository, app ID, display name, and homepage.",
             );
-            let pasted = ui.add(
-                egui::TextEdit::singleline(&mut self.repo_input)
-                    .hint_text("https://github.com/owner/repository"),
-            );
-            if pasted.changed() && self.repo_input.trim().starts_with("http") {
-                self.import_repo();
-            }
-            if ui.button("USE GITHUB LINK / OWNER/REPO").clicked() {
-                self.import_repo();
+                let pasted = ui.add(
+                    egui::TextEdit::singleline(&mut self.repo_input)
+                        .hint_text("https://github.com/owner/repository"),
+                );
+                if pasted.changed() && self.repo_input.trim().starts_with("http") {
+                    self.import_repo();
+                }
+                if ui.button("USE GITHUB LINK / OWNER/REPO").clicked() {
+                    self.import_repo();
+                }
             }
             ui.horizontal(|ui| {
                 ui.label(RichText::new("App ID").color(MUTED));
@@ -401,11 +510,40 @@ impl CentralPanel {
                 ui.label(RichText::new("Display name").color(MUTED));
                 ui.add(egui::TextEdit::singleline(&mut self.draft_name).desired_width(160.0));
             });
-            ui.horizontal(|ui| {
+            if !self.manage_supported {
+                ui.horizontal(|ui| {
             ui.label(RichText::new("GitHub repo").color(MUTED));
             ui.add(egui::TextEdit::singleline(&mut self.draft_repo).desired_width(220.0));
             ui.checkbox(&mut self.draft_private, "Restricted to granted users").on_hover_text("Unchecked: public access. This does not change the repository privacy on GitHub.");
         });
+            }
+            ui.horizontal(|ui| {
+                ui.label("Project status");
+                let selected = self
+                    .draft_project_status
+                    .as_ref()
+                    .and_then(|id| self.status_stamps.iter().find(|stamp| &stamp.id == id))
+                    .map(|stamp| stamp.name.as_str())
+                    .unwrap_or("No status");
+                egui::ComboBox::from_id_salt("project-status")
+                    .selected_text(selected)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.draft_project_status, None, "No status");
+                        for stamp in &self.status_stamps {
+                            ui.selectable_value(
+                                &mut self.draft_project_status,
+                                Some(stamp.id.clone()),
+                                &stamp.name,
+                            );
+                        }
+                    });
+                if ui.button("EDIT STAMPS").clicked() {
+                    self.status_open = true;
+                }
+            });
+            ui.label(
+                "Status describes the project, independently of listing or available downloads.",
+            );
             ui.label("Summary — explain what it does and why someone would use it.");
             ui.add(
                 egui::TextEdit::multiline(&mut self.draft_summary)
@@ -413,7 +551,7 @@ impl CentralPanel {
                     .desired_width(f32::INFINITY)
                     .hint_text("What can someone accomplish with this app?"),
             );
-            if ui.button("DRAFT SUMMARY FROM GITHUB").on_hover_text("Loads the repository description and README on your server. Drafts are source-based, not AI-generated; nothing is saved automatically.").clicked() {
+            if !self.manage_supported && ui.button("DRAFT SUMMARY FROM GITHUB").on_hover_text("Loads the repository description and README on your server. Drafts are source-based, not AI-generated; nothing is saved automatically.").clicked() {
                 match crate::repo_input::parse(&self.draft_repo) {
                     Ok(fields) => { self.draft_repo = fields.repo.clone(); actions.push(CentralAction::RepoPreview(fields.repo)); }
                     Err(message) => self.message = Some(message),
@@ -447,9 +585,9 @@ impl CentralPanel {
                 ui.label(RichText::new("category").color(MUTED));
                 egui::ComboBox::from_id_salt("app-category")
                     .selected_text(if self.draft_category.is_empty() {
-                        "Uncategorized"
+                        "Uncategorized".into()
                     } else {
-                        &self.draft_category
+                        self.draft_category.replace(" / ", " › ")
                     })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
@@ -530,7 +668,10 @@ impl CentralPanel {
 }
 
 const HELP_TOPICS: &[(&str, &str)] = &[
-    ("Categories", "Pick a category from the App details dropdown. MANAGE CATEGORIES lets admins add, rename, and remove shared categories. Rename updates assigned apps; removal makes them uncategorized. Categories do not change access or listing."),
+    ("Update installed apps", "REFRESH checks each repository's latest release. An installed app with a newer compatible release shows UPDATE. Nexus verifies and stages the download, then replaces its managed copy. Installer packages open through the operating system and may need your input. It does not update unrelated system installations or install silently in the background."),
+    ("Supported projects", "SUPPORTED PROJECTS shows the projects Straconis Software supports. Admins can use MANAGE SUPPORTED PROJECTS to add and edit a name, summary, and https project link, then show or hide the card. These cards open project websites; they do not install or update software."),
+    ("Project status tags", "Use the Project stamp dropdown directly on an admin row to save immediately, or EDIT an app and pick a colored status stamp under Project status, then SAVE APP DETAILS. This adds a colored stamp to its card. MANAGE STATUS STAMPS lets admins add, rename, recolor, or remove shared stamps. Defaults are Released, In development, and Seeking funding for prototype. Status does not show or hide the card, change GitHub privacy, or guarantee a compatible download. Seeking funding can describe hardware projects too."),
+    ("Categories", "Pick a category or subcategory from the App details dropdown (for example Hardware › Electronics). Choose a parent in the category manager to add or move a subcategory. MANAGE CATEGORIES lets admins add, rename, and remove shared categories. Rename updates assigned apps; removal makes them uncategorized. Categories do not change access or listing."),
     ("Import a GitHub link", "ADD APP, then paste a github.com repository link. Query strings, fragments, .git suffixes, and subpage paths are trimmed. The repository spelling is preserved; underscores become hyphens in the separate app ID. Existing app IDs stay unchanged when editing."),
     ("Draft better summaries", "DRAFT SUMMARY FROM GITHUB loads the description and introductory README text. Review the source-based suggestion and choose USE SUGGESTED SUMMARY, or use the README introduction. These are not AI rewrites. Edit the summary to say what the app does and why someone would use it; saving is a separate step. Private repositories need server access."),
     ("Show or hide an app", "Open MANAGE. Each entry says SHOWN IN LAUNCHER or HIDDEN FROM LAUNCHER. Choose SHOW IN LAUNCHER to list it, or HIDE FROM LAUNCHER to remove it from the shared catalog. Changes apply to everyone using this server. Installed copies stay on disk."),
@@ -573,7 +714,9 @@ mod tests {
             panel.admin_apps.push(AdminApp {
                 id: "frameweaver".into(),
                 name: "FrameWeaver".into(),
+                kind: "app".into(),
                 summary: String::new(),
+                project_status: None,
                 category: None,
                 homepage: None,
                 repo: Some("Straconis/frameweaver".into()),
@@ -643,7 +786,9 @@ mod tests {
         panel.admin_apps.push(AdminApp {
             id: "tool".into(),
             name: "Tool".into(),
+            kind: "app".into(),
             summary: "A tool".into(),
+            project_status: None,
             category: Some("Tools".into()),
             homepage: None,
             repo: Some("Straconis/tool".into()),
