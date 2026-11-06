@@ -484,6 +484,7 @@ impl Card {
 impl eframe::App for NexusApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
+        let modal_open = self.confirm.is_some() || self.dialog_error.is_some();
         let mut actions = Vec::new();
         egui::TopBottomPanel::bottom("status-bar")
             .frame(
@@ -495,9 +496,11 @@ impl eframe::App for NexusApp {
         egui::CentralPanel::default()
             .frame(Frame::new().fill(BG).inner_margin(20))
             .show(ctx, |ui| {
-                actions.extend(self.header(ui));
-                actions.extend(self.banners(ui));
-                actions.extend(self.grid(ui));
+                ui.add_enabled_ui(!modal_open, |ui| {
+                    actions.extend(self.header(ui));
+                    actions.extend(self.banners(ui));
+                    actions.extend(self.grid(ui));
+                });
             });
         actions.extend(self.dialogs(ctx));
         for action in actions {
@@ -505,6 +508,8 @@ impl eframe::App for NexusApp {
         }
         if self.working() {
             ctx.request_repaint_after(Duration::from_millis(80));
+        } else if !self.children.is_empty() {
+            ctx.request_repaint_after(Duration::from_secs(1));
         }
     }
 }
@@ -696,7 +701,8 @@ impl NexusApp {
     fn live_card(&self, ui: &mut egui::Ui, card: &Card, live: &Live) -> Vec<UiAction> {
         let mut actions = Vec::new();
         let installed = installed_version(&live.install);
-        let update = installed.is_some_and(|current| github::is_newer_release(&live.tag, current));
+        let update = live.asset.is_some()
+            && installed.is_some_and(|current| github::is_newer_release(&live.tag, current));
         ui.label(
             RichText::new(release_line(&live.tag, &live.install, update))
                 .color(TEXT)
@@ -736,9 +742,21 @@ impl NexusApp {
         }
         let width = ui.available_width();
         match &live.asset {
-            None => {
-                let _ = cta(ui, "NO BUILD FOR THIS PLATFORM", CtaKind::Disabled, width);
-            }
+            None => match &live.install {
+                InstallState::Ready(_) => {
+                    if cta(ui, "LAUNCH", CtaKind::Primary, width).clicked() {
+                        actions.push(UiAction::Launch(card.entry.id.clone()));
+                    }
+                }
+                InstallState::InstallerStaged(_) => {
+                    if cta(ui, "OPEN INSTALLER", CtaKind::Primary, width).clicked() {
+                        actions.push(UiAction::OpenInstaller(card.entry.id.clone()));
+                    }
+                }
+                _ => {
+                    let _ = cta(ui, "NO BUILD FOR THIS PLATFORM", CtaKind::Disabled, width);
+                }
+            },
             Some(_) => match &live.install {
                 InstallState::Ready(_) if !update => {
                     if cta(ui, "LAUNCH", CtaKind::Primary, width).clicked() {
@@ -795,38 +813,35 @@ impl NexusApp {
         };
         ui.label(
             RichText::new(format!(
-                "v0.1.0  ·  {}  ·  {}  ·  {}",
+                "v{}  ·  {}",
+                env!("CARGO_PKG_VERSION"),
                 self.status,
-                self.catalog_path.display(),
-                root
             ))
             .color(MUTED)
             .size(11.0),
-        );
+        )
+        .on_hover_text(format!(
+            "Catalog: {}\nInstall location: {root}",
+            self.catalog_path.display()
+        ));
     }
 
     fn dialogs(&self, ctx: &egui::Context) -> Vec<UiAction> {
         let mut actions = Vec::new();
-        if self.confirm.is_some() || self.dialog_error.is_some() {
-            let screen = ctx.screen_rect();
-            let painter = ctx.layer_painter(egui::LayerId::new(
-                egui::Order::Middle,
-                egui::Id::new("nexus-scrim"),
-            ));
-            painter.rect_filled(screen, 0.0, Color32::from_black_alpha(170));
-        }
         if let Some(pending) = &self.confirm {
-            egui::Window::new(
-                RichText::new("CHECKSUM MISSING")
-                    .family(theme::orbitron())
-                    .color(TEXT),
+            egui::Modal::new(egui::Id::new("checksum-confirmation"))
+            .backdrop_color(Color32::from_black_alpha(170))
+            .frame(
+                Frame::new()
+                    .fill(PANEL)
+                    .stroke(Stroke::new(1.0_f32, ACCENT))
+                    .inner_margin(16)
+                    .corner_radius(8),
             )
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .frame(Frame::new().fill(PANEL).stroke(Stroke::new(1.0_f32, ACCENT)).inner_margin(16).corner_radius(8))
             .show(ctx, |ui| {
-                ui.set_min_width(380.0);
+                ui.set_width(380.0);
+                ui.heading(RichText::new("CHECKSUM MISSING").family(theme::orbitron()));
+                ui.add_space(8.0);
                 ui.label(
                     RichText::new(format!(
                         "{} does not publish a SHA-256 checksum. Nexus Launcher cannot verify the download.",
@@ -851,29 +866,25 @@ impl NexusApp {
             });
         }
         if let Some(message) = &self.dialog_error {
-            egui::Window::new(
-                RichText::new("SOMETHING WENT WRONG")
-                    .family(theme::orbitron())
-                    .color(TEXT),
-            )
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 40.0])
-            .frame(
-                Frame::new()
-                    .fill(PANEL)
-                    .stroke(Stroke::new(1.0_f32, BORDER))
-                    .inner_margin(16)
-                    .corner_radius(8),
-            )
-            .show(ctx, |ui| {
-                ui.set_max_width(460.0);
-                ui.label(RichText::new(message).color(TEXT));
-                ui.add_space(10.0);
-                if cta(ui, "DISMISS", CtaKind::Primary, 140.0).clicked() {
-                    actions.push(UiAction::DismissError);
-                }
-            });
+            egui::Modal::new(egui::Id::new("error-dialog"))
+                .backdrop_color(Color32::from_black_alpha(170))
+                .frame(
+                    Frame::new()
+                        .fill(PANEL)
+                        .stroke(Stroke::new(1.0_f32, BORDER))
+                        .inner_margin(16)
+                        .corner_radius(8),
+                )
+                .show(ctx, |ui| {
+                    ui.set_width(460.0);
+                    ui.heading(RichText::new("SOMETHING WENT WRONG").family(theme::orbitron()));
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(message).color(TEXT));
+                    ui.add_space(10.0);
+                    if cta(ui, "DISMISS", CtaKind::Primary, 140.0).clicked() {
+                        actions.push(UiAction::DismissError);
+                    }
+                });
         }
         actions
     }
@@ -952,7 +963,11 @@ fn repository_url(card: &Card) -> Option<String> {
     }
     match &card.phase {
         Phase::Live(live) if !live.html_url.is_empty() => Some(live.html_url.clone()),
-        _ => None,
+        _ => card
+            .entry
+            .repo
+            .as_ref()
+            .map(|repo| format!("https://github.com/{repo}")),
     }
 }
 
@@ -1053,4 +1068,79 @@ fn install_job(
         id,
         result: result.map(|_| ()).map_err(|err| err.to_string()),
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> NexusApp {
+        let (jobs, _) = mpsc::channel();
+        let (_, events) = mpsc::channel();
+        NexusApp {
+            catalog_path: PathBuf::from("catalog/apps.toml"),
+            cards: Vec::new(),
+            catalog_error: None,
+            rate: None,
+            limited_detail: None,
+            banner: None,
+            status: "Checking tool…".into(),
+            data_root: Ok(PathBuf::from("data")),
+            jobs,
+            events,
+            confirm: None,
+            dialog_error: None,
+            children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn repository_link_exists_before_a_release() {
+        let catalog =
+            catalog::parse_catalog("[[app]]\nid = 'tool'\nname = 'Tool'\nrepo = 'Straconis/tool'")
+                .unwrap();
+        let card = Card::from_entry(catalog.apps[0].clone());
+        assert_eq!(
+            repository_url(&card).as_deref(),
+            Some("https://github.com/Straconis/tool")
+        );
+    }
+
+    #[test]
+    fn installed_build_keeps_launch_button_without_latest_asset() {
+        let app = app();
+        let catalog = catalog::parse_catalog("[[app]]\nid = 'tool'\nname = 'Tool'").unwrap();
+        let card = Card::from_entry(catalog.apps[0].clone());
+        let live = Live {
+            tag: "v2.0.0".into(),
+            html_url: String::new(),
+            asset: None,
+            install: InstallState::Ready(install::InstallRecord {
+                schema: install::RECORD_SCHEMA,
+                app_id: "tool".into(),
+                version: "v1.0.0".into(),
+                asset_name: "tool".into(),
+                sha256: None,
+                kind: PackageKind::Portable,
+                install_dir: PathBuf::from("data/tool"),
+                launch_path: Some(PathBuf::from("data/tool/run")),
+                installer_path: None,
+                installed_at: String::new(),
+            }),
+            busy: None,
+        };
+        let ctx = egui::Context::default();
+        theme::apply(&ctx);
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                app.live_card(ui, &card, &live);
+            });
+        });
+        assert!(output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "LAUNCH")
+        }));
+        assert!(!output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "UPDATE")
+        }));
+    }
 }

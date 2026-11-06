@@ -33,7 +33,7 @@ Each catalog entry is one desktop tool. The launcher asks the unauthenticated Gi
 
 - **COMING SOON** when the repo has no published release (HTTP 404). A missing repository looks the same, because the request is unauthenticated.
 - **INSTALL** when a release asset matches this operating system and CPU.
-- **LAUNCH** when a portable build or archive is already installed and the launch file is still on disk.
+- **LAUNCH** when a portable build or archive is already installed and the launch file is still on disk. An installed build remains launchable if the latest release has no compatible asset.
 - **UPDATE** when the installed tag is older than the latest release.
 - **OPEN INSTALLER** when the file is an MSI, DMG, deb, or setup executable that was downloaded and handed to the operating system.
 
@@ -45,7 +45,7 @@ The shape of the app — a local catalog of desktop tools, installs driven by pu
 
 ## Design
 
-The window uses the Straconis palette. Header and button labels use [Orbitron](https://github.com/theleagueof/orbitron) (SIL Open Font License, reserved font name "Orbitron"). The file in `assets/fonts/` is the unmodified variable font, with `assets/fonts/OFL.txt`. Body copy stays on egui's default UI font so descriptions stay readable. Calls to action are uppercase.
+The current window uses a provisional Straconis palette and text header; final brand assets and app icons are still pending. Header and button labels use [Orbitron](https://github.com/theleagueof/orbitron) (SIL Open Font License, reserved font name "Orbitron"). The file in `assets/fonts/` is the unmodified variable font, with `assets/fonts/OFL.txt`. Body copy stays on egui's default UI font so descriptions stay readable. Calls to action are uppercase.
 
 | Token | Hex | Use |
 | --- | --- | --- |
@@ -66,7 +66,7 @@ The window uses the Straconis palette. Header and button labels use [Orbitron](h
 | `name` | yes | Name shown on the card (rendered in uppercase). |
 | `summary` | no | One or two sentences under the name. |
 | `repo` | no | GitHub `owner/name`. A trailing `.git` is stripped. Omit it, or leave it blank, and the card stays **COMING SOON** with no network call. |
-| `homepage` | no | URL opened by **REPOSITORY**. If omitted, the release page is used once a release exists. |
+| `homepage` | no | URL opened by **REPOSITORY**. If omitted, the release page is used once a release exists; otherwise the configured GitHub repository is used. |
 | `category` | no | Short label above the name, shown in the accent color. |
 | `executable` | no | Relative path of the program inside an extracted archive. No absolute paths and no `..`. |
 | `asset_preference` | no | Case-insensitive substrings. The first one that matches a compatible asset wins. |
