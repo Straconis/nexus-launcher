@@ -26,3 +26,9 @@ publish a release.
 --check parses the catalog and does not open a window or call GitHub.
 There is no macOS binary in the v0.1.0-alpha release. Build from source
 with Rust 1.99.1 if you need another platform. See README.md.
+
+The LAUNCHER strip can download a newer Nexus Launcher release and replace
+this executable. It does not replace catalog/apps.toml or tools you already
+installed. The v0.1.0-alpha download does not include that strip. If you
+are running that file, install one later release by hand. After that, the
+window can update itself.

@@ -9,6 +9,7 @@ pub mod cli;
 pub mod github;
 pub mod install;
 pub mod model;
+pub mod self_update;
 
 #[cfg(feature = "gui")]
 mod theme;

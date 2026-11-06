@@ -27,6 +27,31 @@ Tagged releases publish binaries on [GitHub Releases](https://github.com/Stracon
 
 macOS binaries are not part of this alpha. Unpack an archive and run `nexus-launcher` or `nexus-launcher.exe` from that directory so the program finds `catalog/apps.toml`. `--check` parses the catalog and exits. Runtime requirements and the alpha limits are in the release notes. Building from source is described under [Build](#build).
 
+**`v0.1.0-alpha` cannot update itself.** That download was built before self-update existed. Install one later release by hand (see [Updating Nexus Launcher](#updating-nexus-launcher)). After that, the window can install newer releases.
+
+## Updating Nexus Launcher
+
+The **LAUNCHER** strip in the window shows this build's version and whether a newer release of Nexus Launcher itself is available. **UPDATE LAUNCHER** downloads it. The check runs on a background thread. Nothing is downloaded until you press the button.
+
+The check uses the GitHub release list for `Straconis/nexus-launcher`, not `releases/latest`. GitHub's latest endpoint hides prereleases, so an alpha build would never see the next alpha. A prerelease version (this tree is `0.1.1-alpha`) is offered a newer prerelease or a newer stable release. A stable version is not offered prereleases. The comparison is semver, after a leading `v` is removed. The same version is not offered again, and an older tag is not a downgrade. A tag that was already applied is remembered under the data directory so a replaced build cannot immediately install that same tag again.
+
+Only the official archive for this machine is eligible:
+
+| OS | Archive |
+| --- | --- |
+| Linux x86_64 | `nexus-launcher-linux-x86_64.tar.gz` |
+| Windows x86_64 | `nexus-launcher-windows-x86_64.zip` |
+
+Anything else (AppImage, deb, MSI, a macOS archive, another CPU) is ignored. The release must publish a SHA-256 digest or `SHA256SUMS.txt` that lists that archive. There is no "install anyway" for the launcher. A bad or missing checksum deletes the download and leaves the program you are running in place.
+
+The swap replaces that one executable. It does not copy `catalog/apps.toml` over yours, and it does not touch installed tools under the data directory. On Windows the running file is renamed aside (a running `.exe` often cannot be overwritten in place) and the new file takes its name. If the folder is not writable, the update stops and does not ask for administrator rights. If the new file cannot be moved into place, the previous executable is restored. The new build is started with the same arguments and the old process exits. The next launch deletes the `.old` backup when the operating system allows it.
+
+Limits:
+
+- macOS has no published binary, so the strip says self-update is not available there.
+- The tag in `Cargo.toml` is the version the binary reports. A release tag must be `v` plus that version (`v0.1.1-alpha` for this tree) or the running copy will not recognize itself and may offer the release you just installed.
+- `v0.1.0-alpha` does not contain this code. Users of that file need one manual download. Self-update starts with the first release built from this change.
+
 ## What it is
 
 Each catalog entry is one desktop tool. The launcher asks the unauthenticated GitHub API for that repository's latest release, picks a build for the machine you are on, and shows one card:
@@ -148,7 +173,7 @@ Each app directory holds `install.json` and a `current/` folder. Launch records 
 
 **Updates.** **REFRESH** compares the recorded tag with `releases/latest`. A newer semver tag (a leading `v` is ignored) shows **UPDATE**. Non-semver tags count as an update when the strings differ. The previous `current/` directory is swapped out after the new files are in place. Replacing a portable build can fail if that process is still running and the OS locks the file, which is common on Windows.
 
-**GitHub rate limit.** Requests send `User-Agent: nexus-launcher/0.1` and no token. The unauthenticated budget is 60 requests per hour per IP. A banner appears when a response is rejected for rate limit or when fewer than 10 requests remain. A hard limit stops the rest of that refresh instead of spending more calls. Private repositories and repos with no release both surface as **COMING SOON**.
+**GitHub rate limit.** Requests send `User-Agent: nexus-launcher/<version>` and no token. The unauthenticated budget is 60 requests per hour per IP. A banner appears when a response is rejected for rate limit or when fewer than 10 requests remain. A hard limit stops the rest of that refresh instead of spending more calls. Private repositories and repos with no release both surface as **COMING SOON**. The launcher's own update check shares this budget.
 
 **Best-effort install state.** `install.json` plus the launch file means installed. A missing launch file is an incomplete install, and the card offers **INSTALL** again. An installer that was only handed to the OS is "installer downloaded", not "installed".
 
@@ -158,7 +183,7 @@ A tray icon needs `tray-icon` (or the platform shell) beside eframe's event loop
 
 ## Tests
 
-`cargo test` does not open a window and does not call GitHub. It covers catalog validation, the `--check` flag, release JSON and rate-limit classification, asset selection, SHA-256 sums, zip and tar.gz extraction, zip-slip rejection, and install-record detection.
+`cargo test` does not open a window and does not call GitHub. It covers catalog validation, the `--check` flag, release JSON and rate-limit classification, asset selection, SHA-256 sums, zip and tar.gz extraction, zip-slip rejection, and install-record detection. Self-update tests cover prerelease selection (including an alpha that `releases/latest` would hide), stable builds ignoring newer alphas, missing checksums, the official Linux and Windows archive names, a failed checksum, a zip-slip archive, an archive with no launcher binary, rollback when the new file cannot be moved into place, and replacement of an open executable without touching a custom catalog or installed apps. Those replacement tests run on Linux and in Windows CI. The read-only directory case runs on Linux, where a mode of `0555` can refuse the write without granting extra privileges.
 
 ## License
 

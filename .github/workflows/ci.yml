@@ -25,3 +25,18 @@ jobs:
       - run: cargo test
       - run: cargo run -- --check
       - run: cargo build --release
+
+  windows:
+    name: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          components: clippy
+      - name: Test, clippy, and build
+        run: |
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+          cargo build --release
