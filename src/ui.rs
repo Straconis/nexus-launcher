@@ -22,7 +22,7 @@ pub fn run(catalog_path: PathBuf) -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "NEXUS LAUNCHER",
+        "Straconis Nexus Launcher",
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx);
@@ -520,28 +520,31 @@ impl NexusApp {
         ui.horizontal(|ui| {
             let logo = branding_texture(
                 ui.ctx(),
-                "straconis-dev-logo",
-                include_bytes!("../assets/branding/straconis-dev-logo.png"),
+                "straconis-nexus-launcher",
+                include_bytes!("../assets/branding/straconis-nexus-launcher.png"),
             );
-            ui.add(egui::Image::from_texture(&logo).fit_to_exact_size(Vec2::splat(120.0)))
+            ui.add(egui::Image::from_texture(&logo).max_size(Vec2::splat(144.0)))
                 .on_hover_ui(|ui| {
-                    ui.add(egui::Image::from_texture(&logo).fit_to_exact_size(Vec2::splat(300.0)));
+                    ui.add(egui::Image::from_texture(&logo).max_size(Vec2::splat(340.0)));
                 });
             ui.add_space(8.0);
             ui.vertical(|ui| {
-                let wordmark = branding_texture(
-                    ui.ctx(),
-                    "straconis-software-wordmark",
-                    include_bytes!("../assets/branding/straconis-software-wordmark.png"),
-                );
-                ui.add(
-                    egui::Image::from_texture(&wordmark).fit_to_exact_size(Vec2::new(240.0, 75.0)),
+                ui.label(
+                    RichText::new("STRACONIS")
+                        .family(theme::orbitron())
+                        .size(14.0)
+                        .color(ACCENT),
                 );
                 ui.label(
                     RichText::new("NEXUS LAUNCHER")
                         .family(theme::orbitron())
                         .size(24.0)
                         .color(TEXT),
+                );
+                ui.label(
+                    RichText::new("Your desktop tools, connected.")
+                        .size(13.0)
+                        .color(MUTED),
                 );
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -819,6 +822,24 @@ impl NexusApp {
     }
 
     fn footer(&self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            brand_link(
+                ui,
+                "straconis-software-wordmark",
+                include_bytes!("../assets/branding/straconis-software-wordmark.png"),
+                Vec2::new(160.0, 50.0),
+                "https://straconis.dev",
+            );
+            ui.add_space(12.0);
+            brand_link(
+                ui,
+                "s3d-labs",
+                include_bytes!("../assets/branding/s3d-labs-logo.png"),
+                Vec2::splat(58.0),
+                "https://s3dlabs.com",
+            );
+        });
+        ui.add_space(4.0);
         let root = match &self.data_root {
             Ok(path) => path.display().to_string(),
             Err(err) => err.clone(),
@@ -899,6 +920,32 @@ impl NexusApp {
                 });
         }
         actions
+    }
+}
+
+fn brand_link(ui: &mut egui::Ui, name: &'static str, bytes: &[u8], size: Vec2, url: &str) {
+    let texture = branding_texture(ui.ctx(), name, bytes);
+    let response = ui.add(
+        egui::Image::from_texture(&texture)
+            .fit_to_exact_size(size)
+            .sense(egui::Sense::click()),
+    );
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(url);
+    // Retain the full developer mark as a brand detail without competing with Nexus.
+    if name == "straconis-software-wordmark" {
+        response.clone().on_hover_ui(|ui| {
+            let logo = branding_texture(
+                ui.ctx(),
+                "straconis-dev-logo",
+                include_bytes!("../assets/branding/straconis-dev-logo.png"),
+            );
+            ui.add(egui::Image::from_texture(&logo).max_size(Vec2::splat(260.0)));
+        });
+    }
+    if response.clicked() {
+        ui.ctx().open_url(egui::OpenUrl::new_tab(url));
     }
 }
 
