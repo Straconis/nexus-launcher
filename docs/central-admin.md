@@ -4,9 +4,10 @@ This document describes the `0.2.0-alpha` broker. It is not a released build. Ta
 
 ## What it is
 
-Steve can run one Nexus Launcher, sign in as an admin, and from that window:
+Steve can run one Nexus Launcher, sign in as an admin, and open **MANAGE** for a resizable, scrollable app-management window:
 
 - add desktop apps to a shared catalog, one at a time
+- edit existing entries without changing their published state
 - publish or unpublish them
 - grant or revoke a GitHub user on a single app
 
@@ -48,7 +49,7 @@ Admin is not a flag the client can set. `NEXUS_ADMIN_GITHUB_IDS` is a list of nu
 
 Sessions last `NEXUS_SESSION_TTL_HOURS` (default 30 days, maximum 90). There is no refresh token. Sign in again when the session ends.
 
-The launcher stores the session in the OS keyring (`keyring` crate: service `nexus-launcher`, account `central-session`). If the keyring cannot save, it falls back to `session.token` in the config directory, mode `0600` on Unix. That file is a weaker store. This environment did not prove a live keyring prompt.
+The launcher stores the session in the OS keyring (`keyring` crate: service `nexus-launcher`, account `central-session`). Native credential backends are explicitly enabled for Linux, Windows, and macOS. Linux uses the kernel keyring, whose lifetime is tied to the OS session; sign in again if that keyring is cleared. If the keyring cannot save, it falls back to `session.token` in the config directory, mode `0600` on Unix. That file is a weaker store. This environment did not prove a live keyring prompt.
 
 ## Access rules
 

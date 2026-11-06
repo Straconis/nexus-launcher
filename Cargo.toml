@@ -45,7 +45,15 @@ thiserror = "1"
 toml = "0.8"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 nexus-protocol = { path = "crates/nexus-protocol" }
-keyring = "3"
+# Select real OS credential stores; keyring without a platform feature uses a mock store.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["linux-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
 
 [lib]
 name = "nexus_launcher"

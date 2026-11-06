@@ -46,6 +46,7 @@ struct NexusApp {
     status: String,
     data_root: Result<PathBuf, String>,
     jobs: Sender<Job>,
+    central_jobs: Sender<CentralJob>,
     events: Receiver<Event>,
     confirm: Option<PendingInstall>,
     dialog_error: Option<String>,
@@ -93,7 +94,6 @@ struct FetchTarget {
 enum Job {
     Fetch(Vec<FetchTarget>),
     Install(InstallRequest),
-    Central(CentralJob),
 }
 
 enum CentralJob {
@@ -218,6 +218,16 @@ impl NexusApp {
     fn new(catalog_path: PathBuf) -> Self {
         let (jobs, job_rx) = mpsc::channel();
         let (event_tx, events) = mpsc::channel();
+        let (central_jobs, central_rx) = mpsc::channel();
+        let central_events = event_tx.clone();
+        thread::Builder::new()
+            .name("nexus-launcher-admin".into())
+            .spawn(move || {
+                while let Ok(job) = central_rx.recv() {
+                    central_job(job, &central_events);
+                }
+            })
+            .expect("spawn administration thread");
         thread::Builder::new()
             .name("nexus-launcher-net".into())
             .spawn(move || worker_loop(job_rx, event_tx))
@@ -232,6 +242,7 @@ impl NexusApp {
             status: "Ready".into(),
             data_root: install::default_data_root().map_err(|err| err.to_string()),
             jobs,
+            central_jobs,
             events,
             confirm: None,
             dialog_error: None,
@@ -981,9 +992,10 @@ impl NexusApp {
         actions
     }
 
-    fn send_central(&self, job: CentralJob) {
-        if self.jobs.send(Job::Central(job)).is_err() {
-            // The dialog is set by the caller when it has `&mut self`.
+    fn send_central(&mut self, job: CentralJob) {
+        if self.central_jobs.send(job).is_err() {
+            self.central.message =
+                Some("Administration worker stopped. Restart the launcher.".into());
         }
     }
 
@@ -995,6 +1007,7 @@ impl NexusApp {
                 continue;
             };
             let authed = |token: &Option<String>| token.clone().unwrap_or_default();
+            self.central.message = Some("Working…".into());
             match action {
                 central_panel::CentralAction::StartLogin => {
                     self.send_central(CentralJob::StartLogin { server_url });
@@ -1034,7 +1047,12 @@ impl NexusApp {
                         } else {
                             Visibility::Public
                         },
-                        published: false,
+                        published: self
+                            .central
+                            .admin_apps
+                            .iter()
+                            .find(|app| app.id == self.central.draft_id)
+                            .is_some_and(|app| app.published),
                     };
                     self.send_central(CentralJob::SaveApp {
                         server_url,
@@ -1163,9 +1181,19 @@ impl NexusApp {
                 self.merge_central(apps);
             }
             CentralEvent::Catalog(Err(message)) => self.central.message = Some(message),
-            CentralEvent::Admin(Ok(apps)) => self.central.admin_apps = apps,
+            CentralEvent::Admin(Ok(apps)) => {
+                self.central.message = Some(format!("Loaded {} apps.", apps.len()));
+                self.central.admin_apps = apps;
+            }
             CentralEvent::Admin(Err(message)) => self.central.message = Some(message),
-            CentralEvent::Grants(Ok(grants)) => self.central.grants = grants,
+            CentralEvent::Grants(Ok(grants)) => {
+                self.central.message = Some(format!(
+                    "Loaded {} grants for {}.",
+                    grants.len(),
+                    self.central.selected
+                ));
+                self.central.grants = grants;
+            }
             CentralEvent::Grants(Err(message)) => self.central.message = Some(message),
             CentralEvent::Note(Ok(message)) => {
                 self.central.message = Some(message);
@@ -1539,7 +1567,6 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
         match job {
             Job::Fetch(targets) => fetch_all(&client, &targets, &events),
             Job::Install(request) => install_job(&client, request, &events),
-            Job::Central(job) => central_job(job, &events),
         }
     }
 }
@@ -1559,9 +1586,6 @@ fn report_client_failure(events: &Sender<Event>, job: Job, message: &str) {
                 id: request.app_id,
                 result: Err(message.to_string()),
             });
-        }
-        Job::Central(_) => {
-            let _ = events.send(Event::Central(CentralEvent::Note(Err(message.to_string()))));
         }
     }
 }
@@ -1808,6 +1832,7 @@ mod tests {
 
     fn app() -> NexusApp {
         let (jobs, _) = mpsc::channel();
+        let (central_jobs, _) = mpsc::channel();
         let (_, events) = mpsc::channel();
         NexusApp {
             catalog_path: PathBuf::from("catalog/apps.toml"),
@@ -1819,6 +1844,7 @@ mod tests {
             status: "Checking tool…".into(),
             data_root: Ok(PathBuf::from("data")),
             jobs,
+            central_jobs,
             events,
             confirm: None,
             dialog_error: None,

@@ -31,6 +31,8 @@ impl CentralClient {
         let base = reqwest::Url::parse(server_url).map_err(|err| err.to_string())?;
         let http = reqwest::blocking::Client::builder()
             .user_agent(crate::github::user_agent_value())
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(120))
             .build()
             .map_err(|err| err.to_string())?;
         Ok(Self { http, base, token })
@@ -68,7 +70,7 @@ impl CentralClient {
     }
 
     pub fn catalog(&self) -> Result<Vec<CatalogApp>, String> {
-        self.send("GET", "v1/catalog", true, None)
+        self.send("GET", "v1/catalog", self.token.is_some(), None)
     }
 
     pub fn admin_apps(&self) -> Result<Vec<AdminApp>, String> {
