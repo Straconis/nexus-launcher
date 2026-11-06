@@ -3,3 +3,5 @@
 **/*.partial
 **/*.rs.bk
 .DS_Store
+*.sqlite
+*.sqlite-*

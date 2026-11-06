@@ -1,13 +1,25 @@
+[workspace]
+resolver = "2"
+members = [".", "crates/nexus-protocol", "crates/nexus-server"]
+
+[workspace.package]
+version = "0.2.0-alpha"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Straconis"]
+repository = "https://github.com/Straconis/nexus-launcher"
+rust-version = "1.99"
+
 [package]
 name = "nexus-launcher"
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.99"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "FOSS suite launcher for Straconis desktop tools"
-repository = "https://github.com/Straconis/nexus-launcher"
+repository.workspace = true
 readme = "README.md"
-authors = ["Straconis"]
+authors.workspace = true
 keywords = ["launcher", "egui", "github", "desktop"]
 categories = ["gui"]
 
@@ -31,6 +43,8 @@ tar = "0.4"
 thiserror = "1"
 toml = "0.8"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+nexus-protocol = { path = "crates/nexus-protocol" }
+keyring = "3"
 
 [lib]
 name = "nexus_launcher"

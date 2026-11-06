@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 pub mod catalog;
+pub mod central;
 pub mod checksum;
 pub mod cli;
 pub mod github;

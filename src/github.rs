@@ -9,8 +9,12 @@ use crate::catalog::Platform;
 use crate::checksum::{is_checksum_name, is_sums_filename, parse_digest};
 use crate::model::PackageKind;
 
-pub const USER_AGENT_VALUE: &str =
-    "nexus-launcher/0.1 (+https://github.com/Straconis/nexus-launcher)";
+pub fn user_agent_value() -> String {
+    format!(
+        "nexus-launcher/{} (+https://github.com/Straconis/nexus-launcher)",
+        env!("CARGO_PKG_VERSION")
+    )
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Asset {
@@ -111,7 +115,7 @@ struct GhErrorBody {
 
 pub fn http_client() -> Result<reqwest::blocking::Client, reqwest::Error> {
     reqwest::blocking::Client::builder()
-        .user_agent(USER_AGENT_VALUE)
+        .user_agent(user_agent_value())
         .connect_timeout(Duration::from_secs(20))
         .timeout(Duration::from_secs(15 * 60))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
@@ -143,7 +147,7 @@ pub fn fetch_latest(
     let response = match client
         .get(url)
         .header(ACCEPT, "application/vnd.github+json")
-        .header(USER_AGENT, USER_AGENT_VALUE)
+        .header(USER_AGENT, user_agent_value())
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
     {

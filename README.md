@@ -27,6 +27,14 @@ Tagged releases publish binaries on [GitHub Releases](https://github.com/Stracon
 
 macOS binaries are not part of this alpha. Unpack an archive and run `nexus-launcher` or `nexus-launcher.exe` from that directory so the program finds `catalog/apps.toml`. `--check` parses the catalog and exits. Runtime requirements and the alpha limits are in the release notes. Building from source is described under [Build](#build).
 
+This source tree is **0.2.0-alpha**. It is not a published GitHub release. `v0.1.0-alpha` is the only published download, and it does not include central sign-in. The separate self-update branch is `0.1.1-alpha` and is not merged here.
+
+## Central catalog
+
+An optional broker, `nexus-server`, holds an explicit app list and per-user grants. GitHub login identifies people by numeric user id. Private builds are downloaded through the broker, so a regular user does not need access to the private source repository. Cards are not filtered only in the window: catalog, release, and download requests are checked on the server. The local `catalog/apps.toml` file still works when no broker is configured. Website repositories and WordPress plugins are not imported.
+
+Setup, the device-flow choice, permissions, and what was not tested against a live GitHub app are in [docs/central-admin.md](docs/central-admin.md). Example environment names, with empty secrets, are in [deploy/nexus-server.env.example](deploy/nexus-server.env.example).
+
 ## What it is
 
 Each catalog entry is one desktop tool. The launcher asks the unauthenticated GitHub API for that repository's latest release, picks a build for the machine you are on, and shows one card:
@@ -148,7 +156,7 @@ Each app directory holds `install.json` and a `current/` folder. Launch records 
 
 **Updates.** **REFRESH** compares the recorded tag with `releases/latest`. A newer semver tag (a leading `v` is ignored) shows **UPDATE**. Non-semver tags count as an update when the strings differ. The previous `current/` directory is swapped out after the new files are in place. Replacing a portable build can fail if that process is still running and the OS locks the file, which is common on Windows.
 
-**GitHub rate limit.** Requests send `User-Agent: nexus-launcher/0.1` and no token. The unauthenticated budget is 60 requests per hour per IP. A banner appears when a response is rejected for rate limit or when fewer than 10 requests remain. A hard limit stops the rest of that refresh instead of spending more calls. Private repositories and repos with no release both surface as **COMING SOON**.
+**GitHub rate limit.** Requests send `User-Agent: nexus-launcher/<version>` and no token. The unauthenticated budget is 60 requests per hour per IP. A banner appears when a response is rejected for rate limit or when fewer than 10 requests remain. A hard limit stops the rest of that refresh instead of spending more calls. Private repositories and repos with no release both surface as **COMING SOON**. The central broker is separate and uses its own server credential for private release reads.
 
 **Best-effort install state.** `install.json` plus the launch file means installed. A missing launch file is an incomplete install, and the card offers **INSTALL** again. An installer that was only handed to the OS is "installer downloaded", not "installed".
 
