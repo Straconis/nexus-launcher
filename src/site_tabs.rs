@@ -6,20 +6,26 @@ use wry::dpi::{PhysicalPosition, PhysicalSize};
 use wry::{NewWindowResponse, PermissionResponse, WebContext, WebView, WebViewBuilder};
 
 const SITE: &str = "https://straconis.dev";
-const EXTERNAL_LINKS: &str = r#"
+const FOCUSED_PAGE: &str = r#"
+document.addEventListener('DOMContentLoaded', () => {
+    const screen = new URL(location.href).searchParams.get('nexus_app');
+    if (!screen || document.body.dataset.nexusScreen === screen) return;
+    document.body.replaceChildren();
+    document.body.style.cssText = 'background:#101118;color:#f5f5fa;padding:24px;font:16px system-ui,sans-serif';
+    const message = document.createElement('p');
+    message.textContent = 'This page needs Straconis Project Nexus 1.19.0 or newer. Reload after the site is updated.';
+    document.body.append(message);
+});
 document.addEventListener('click', (event) => {
     if (event.defaultPrevented || event.button !== 0) return;
     const link = event.target.closest?.('a[href]');
-    if (!link || link.target === '_blank') return;
+    if (!link) return;
     const url = new URL(link.href);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
-    const onSite = url.protocol === 'https:' &&
-        (url.hostname === 'straconis.dev' || url.hostname === 'www.straconis.dev');
-    const admin = url.pathname.startsWith('/wp-admin') || url.pathname === '/wp-login.php';
-    if (!onSite || admin) {
-        event.preventDefault();
-        window.open(url.href, '_blank', 'noopener');
-    }
+    if (url.origin === location.origin && url.pathname === location.pathname &&
+        url.search === location.search && url.hash) return;
+    event.preventDefault();
+    window.open(url.href, '_blank', 'noopener');
 }, true);
 "#;
 
@@ -27,19 +33,27 @@ document.addEventListener('click', (event) => {
 pub(super) enum SiteTab {
     Updates,
     Request,
+    Contact,
     Library,
-    Website,
 }
 
 impl SiteTab {
-    pub(super) const ALL: [Self; 4] = [Self::Updates, Self::Request, Self::Library, Self::Website];
+    pub(super) const ALL: [Self; 3] = [Self::Updates, Self::Request, Self::Library];
+
+    pub(super) fn group(self) -> Self {
+        if self == Self::Contact {
+            Self::Request
+        } else {
+            self
+        }
+    }
 
     pub(super) fn label(self) -> &'static str {
         match self {
-            Self::Updates => "LATEST UPDATES",
+            Self::Updates => "LATEST POST",
             Self::Request => "REQUEST A PROJECT",
             Self::Library => "LANGUAGE LIBRARY",
-            Self::Website => "STRACONIS.DEV",
+            Self::Contact => "CONTACT",
         }
     }
 
@@ -47,8 +61,8 @@ impl SiteTab {
         let path = match self {
             Self::Updates => "/?nexus_app=updates#nexus-building-now",
             Self::Request => "/?nexus_app=request#project-request",
-            Self::Library => "/language-library/",
-            Self::Website => "/",
+            Self::Contact => "/?nexus_app=contact#project-request",
+            Self::Library => unreachable!("the Language Library is a native tab"),
         };
         format!("{SITE}{path}")
     }
@@ -68,7 +82,11 @@ fn can_embed(url: &str) -> bool {
         Some("challenges.cloudflare.com") => true,
         Some("straconis.dev" | "www.straconis.dev") => {
             url.path() == "/wp-admin/admin-post.php"
-                || (!url.path().starts_with("/wp-admin") && url.path() != "/wp-login.php")
+                || (url.path() == "/"
+                    && url.query_pairs().any(|(key, value)| {
+                        key == "nexus_app"
+                            && matches!(value.as_ref(), "request" | "contact" | "updates")
+                    }))
         }
         _ => false,
     }
@@ -142,7 +160,7 @@ impl SiteTabs {
             .with_autoplay(false)
             .with_devtools(false)
             .with_navigation_handler(|url| can_embed(&url))
-            .with_initialization_script(EXTERNAL_LINKS)
+            .with_initialization_script(FOCUSED_PAGE)
             .with_permission_handler(|_| PermissionResponse::Deny)
             .with_new_window_req_handler(|url, _| {
                 let _ = open_external(&url);
@@ -160,27 +178,13 @@ impl SiteTabs {
         if self.active != Some(tab) {
             self.hide();
         }
-        let mut navigate = None;
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Back").clicked() {
-                navigate = Some("back");
-            }
-            if ui.button("Start of tab").clicked() {
-                navigate = Some("home");
-            }
-            if ui.button("Reload page").clicked() {
-                navigate = Some("reload");
-            }
-            if ui.button("Open in browser").clicked() {
-                let url = self
-                    .views
-                    .get(&tab)
-                    .and_then(|view| view.url().ok())
-                    .filter(|url| can_embed(url) && url != "about:blank")
-                    .unwrap_or_else(|| tab.url());
-                self.message = open_external(&url).err();
-            }
-        });
+        let reload = ui
+            .small_button(if tab == SiteTab::Updates {
+                "Refresh post"
+            } else {
+                "Reload form"
+            })
+            .clicked();
         if let Some(message) = &self.message {
             ui.label(message);
         }
@@ -243,13 +247,8 @@ impl SiteTabs {
             }
             self.active = Some(tab);
         }
-        if let Some(action) = navigate {
-            let result = match action {
-                "back" => view.evaluate_script("window.history.back()"),
-                "home" => view.load_url(&tab.url()),
-                _ => view.reload(),
-            };
-            self.message = result.err().map(|err| err.to_string());
+        if reload {
+            self.message = view.load_url(&tab.url()).err().map(|err| err.to_string());
         }
         ui.allocate_rect(rect, egui::Sense::hover());
     }
@@ -280,12 +279,14 @@ mod tests {
 
     #[test]
     fn keeps_public_site_and_request_submission_inside_the_launcher() {
-        for tab in SiteTab::ALL {
+        for tab in [SiteTab::Updates, SiteTab::Request, SiteTab::Contact] {
             assert!(can_embed(&tab.url()));
         }
         assert!(can_embed("https://straconis.dev/wp-admin/admin-post.php"));
         assert!(can_embed("https://challenges.cloudflare.com/turnstile/"));
         for url in [
+            "https://straconis.dev/",
+            "https://straconis.dev/language-library/",
             "https://straconis.dev/wp-admin/plugins.php",
             "https://straconis.dev/wp-login.php",
             "https://straconis.dev.example.org/",

@@ -1,0 +1,139 @@
+[
+  {
+    "name": "Python",
+    "tasks": [
+      "automation",
+      "data",
+      "backend"
+    ],
+    "fit": "Automating work, working with data, and building prototypes or APIs.",
+    "why": "A readable syntax and a broad ecosystem let you get useful scripts working quickly.",
+    "tradeoff": "CPU-heavy loops may need optimized libraries or another language; distributing desktop apps takes extra packaging work.",
+    "example": "Rename and organize files, analyze a CSV, or build a small bot.",
+    "docs": "https://www.python.org/about/apps/"
+  },
+  {
+    "name": "JavaScript",
+    "tasks": [
+      "web",
+      "backend",
+      "bots"
+    ],
+    "fit": "Interactive websites, browser tools, and event-driven services.",
+    "why": "Runs in browsers; server runtimes let you reuse language skills for APIs and bots.",
+    "tradeoff": "Dynamic types can hide mistakes until runtime. Browser and server APIs differ.",
+    "example": "Build an interactive character sheet or a Discord bot using a suitable library.",
+    "docs": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Introduction"
+  },
+  {
+    "name": "TypeScript",
+    "tasks": [
+      "web",
+      "backend",
+      "bots"
+    ],
+    "fit": "Growing JavaScript projects with shared data models and multiple contributors.",
+    "why": "Adds static checks and editor help to JavaScript, making refactoring easier.",
+    "tradeoff": "Needs a build or execution setup; types do not validate incoming data at runtime.",
+    "example": "Build a web dashboard with shared types between its UI and API.",
+    "docs": "https://www.typescriptlang.org/docs/"
+  },
+  {
+    "name": "SQL",
+    "tasks": [
+      "data",
+      "backend"
+    ],
+    "fit": "Querying, joining, summarizing, and updating relational data.",
+    "why": "Expresses database operations directly; pair it with your application language.",
+    "tradeoff": "Database dialects differ. Indexes and query plans matter as data grows; use parameterized queries for application input.",
+    "example": "Find overdue inventory items or summarize session attendance.",
+    "docs": "https://www.postgresql.org/docs/current/tutorial-sql.html"
+  },
+  {
+    "name": "C#",
+    "tasks": [
+      "desktop",
+      "backend",
+      "games"
+    ],
+    "fit": "Desktop apps, .NET web services, and games using compatible engines.",
+    "why": "Static types, mature tooling, and the .NET ecosystem suit substantial applications.",
+    "tradeoff": "UI framework and deployment choices affect platform support. Engine APIs are a separate thing to learn.",
+    "example": "Build a Windows utility or a game prototype with a C#-compatible engine.",
+    "docs": "https://learn.microsoft.com/en-us/dotnet/csharp/tour-of-csharp/overview"
+  },
+  {
+    "name": "Go",
+    "tasks": [
+      "backend",
+      "automation"
+    ],
+    "fit": "Network services, command-line tools, and concurrent infrastructure utilities.",
+    "why": "A compact language and built-in concurrency tools suit services with many independent operations.",
+    "tradeoff": "Garbage collection and ecosystem fit still matter; it is not usually the first choice for rich desktop UIs.",
+    "example": "Create a small service that monitors endpoints and reports failures.",
+    "docs": "https://go.dev/solutions/"
+  },
+  {
+    "name": "Rust",
+    "tasks": [
+      "systems",
+      "automation"
+    ],
+    "fit": "Performance-sensitive tools and systems where memory safety matters.",
+    "why": "Ownership and strong compiler checks help prevent many memory and concurrency errors in safe code.",
+    "tradeoff": "The ownership model adds learning time. Unsafe code and external libraries still need careful review.",
+    "example": "Build a fast file-processing CLI or a small systems component.",
+    "docs": "https://rust-lang.org/"
+  },
+  {
+    "name": "PHP",
+    "tasks": [
+      "web",
+      "backend"
+    ],
+    "fit": "WordPress plugins, server-rendered websites, and PHP-based web applications.",
+    "why": "Fits existing PHP hosting and WordPress directly; large framework ecosystems support web development.",
+    "tradeoff": "WordPress hooks and APIs take learning. Browser interaction still requires JavaScript.",
+    "example": "Add a custom WordPress dashboard or a form-processing endpoint.",
+    "docs": "https://www.php.net/manual/en/introduction.php"
+  },
+  {
+    "name": "Bash",
+    "tasks": [
+      "automation",
+      "systems"
+    ],
+    "fit": "Short Linux or Unix scripts that connect existing command-line tools.",
+    "why": "Useful for repeatable maintenance and pipelines without building a full application.",
+    "tradeoff": "Quoting and error handling need care. For complex data or large programs, consider Python or another structured language.",
+    "example": "Back up a directory, run checks, or automate a repeatable build step.",
+    "docs": "https://www.gnu.org/software/bash/manual/"
+  },
+  {
+    "name": "Visual Basic .NET (VB.NET)",
+    "tasks": [
+      "desktop",
+      "backend"
+    ],
+    "fit": "Windows business utilities, forms-based desktop software, and maintaining existing Visual Basic .NET applications.",
+    "why": "An approachable syntax with static types and access to the .NET runtime and libraries. Windows Forms can suit internal tools.",
+    "tradeoff": "Microsoft focuses VB on established scenarios rather than new workloads. Check template and library support before starting; C# has broader coverage for new .NET projects. VB.NET is distinct from classic VB6 and Office VBA.",
+    "example": "Build a Windows Forms inventory editor or extend an existing VB.NET business application.",
+    "docs": "https://learn.microsoft.com/en-us/dotnet/visual-basic/getting-started/strategy"
+  },
+  {
+    "name": "C++",
+    "tasks": [
+      "systems",
+      "games",
+      "desktop"
+    ],
+    "fit": "Game engines, native desktop applications, embedded software, and performance-sensitive components.",
+    "why": "Direct control over resources, native compilation, and an extensive ecosystem for engines and existing systems. Modern C++ supports abstractions such as containers and resource-owning types.",
+    "tradeoff": "Memory safety, undefined behavior, build systems, and dependencies require care. Modern ownership patterns help, but the language does not automatically prevent every memory error.",
+    "example": "Build a small native utility, extend a game engine, or work on an embedded component.",
+    "docs": "https://isocpp.org/get-started"
+  }
+]

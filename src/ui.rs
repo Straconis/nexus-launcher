@@ -19,8 +19,12 @@ use nexus_protocol::{CatalogApp, ReleaseMeta, Visibility};
 
 #[path = "central_panel.rs"]
 mod central_panel;
+#[path = "language_library.rs"]
+mod language_library;
 #[path = "site_tabs.rs"]
 mod site_tabs;
+#[path = "support.rs"]
+mod support;
 #[path = "tile_banners.rs"]
 mod tile_banners;
 use site_tabs::{SiteTab, SiteTabs};
@@ -68,6 +72,8 @@ struct NexusApp {
     show_supported: bool,
     site_tab: Option<SiteTab>,
     site_tabs: SiteTabs,
+    language_library: language_library::LanguageLibrary,
+    support: support::Support,
     #[cfg(target_os = "windows")]
     next_installer_check: Option<std::time::Instant>,
     contrast_frame: bool,
@@ -360,6 +366,8 @@ impl NexusApp {
             show_supported: false,
             site_tab: None,
             site_tabs: SiteTabs::default(),
+            language_library: Default::default(),
+            support: Default::default(),
             #[cfg(target_os = "windows")]
             next_installer_check: None,
             contrast_frame: preferences.charcoal_frame,
@@ -967,6 +975,7 @@ impl Card {
 impl eframe::App for NexusApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.site_tabs.pump(ctx);
+        self.support.update(ctx);
         self.poll();
         #[cfg(target_os = "windows")]
         self.poll_external_installer(ctx);
@@ -1018,13 +1027,17 @@ impl eframe::App for NexusApp {
                         }
                         for tab in SiteTab::ALL {
                             if ui
-                                .selectable_label(self.site_tab == Some(tab), tab.label())
+                                .selectable_label(
+                                    self.site_tab.is_some_and(|active| active.group() == tab),
+                                    tab.label(),
+                                )
                                 .clicked()
                             {
                                 actions.push(UiAction::ShowSite(tab));
                                 ctx.request_repaint();
                             }
                         }
+                        ui.hyperlink_to("STRACONIS.DEV ↗", "https://straconis.dev");
                     });
                 });
             });
@@ -1055,7 +1068,21 @@ impl eframe::App for NexusApp {
                     if let Some(tab) = self.site_tab {
                         if modal_open || self.preferences_open || self.central.has_open_window() {
                             self.site_tabs.hide();
+                        } else if tab == SiteTab::Library {
+                            self.site_tabs.hide();
+                            self.language_library.show(ui);
                         } else {
+                            if matches!(tab, SiteTab::Request | SiteTab::Contact) {
+                                ui.horizontal(|ui| {
+                                    for mode in [SiteTab::Request, SiteTab::Contact] {
+                                        if ui.selectable_label(tab == mode, mode.label()).clicked()
+                                        {
+                                            actions.push(UiAction::ShowSite(mode));
+                                            ctx.request_repaint();
+                                        }
+                                    }
+                                });
+                            }
                             self.site_tabs.show(ui, frame, tab);
                         }
                     } else {
@@ -2079,7 +2106,7 @@ impl NexusApp {
     }
 
     fn footer(&self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             brand_link(
                 ui,
                 "straconis-software-wordmark",
@@ -2111,6 +2138,7 @@ impl NexusApp {
                 ui.ctx()
                     .open_url(egui::OpenUrl::new_tab("https://discord.gg/n68NmABjjW"));
             }
+            ui.vertical(|ui| self.support.show(ui));
         });
         ui.add_space(4.0);
         let root = match &self.data_root {
@@ -2877,6 +2905,8 @@ mod tests {
             show_supported: false,
             site_tab: None,
             site_tabs: SiteTabs::default(),
+            language_library: Default::default(),
+            support: Default::default(),
             #[cfg(target_os = "windows")]
             next_installer_check: None,
             contrast_frame: true,

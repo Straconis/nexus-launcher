@@ -1,0 +1,108 @@
+use eframe::egui;
+use serde::Deserialize;
+
+const TASKS: [(&str, &str); 8] = [
+    ("web", "Web interfaces"),
+    ("backend", "APIs & services"),
+    ("bots", "Bots"),
+    ("automation", "Automation & CLI"),
+    ("data", "Data & databases"),
+    ("desktop", "Desktop apps"),
+    ("systems", "Systems & hardware"),
+    ("games", "Games"),
+];
+
+#[derive(Deserialize)]
+struct Language {
+    name: String,
+    tasks: Vec<String>,
+    fit: String,
+    why: String,
+    tradeoff: String,
+    example: String,
+    docs: String,
+}
+
+#[derive(Default)]
+pub(super) struct LanguageLibrary {
+    search: String,
+    task: Option<usize>,
+}
+
+impl LanguageLibrary {
+    pub(super) fn show(&mut self, ui: &mut egui::Ui) {
+        let languages = languages();
+        ui.heading("What are you building?");
+        ui.label("Choose a task, then compare languages and starter ideas.");
+        ui.horizontal_wrapped(|ui| {
+            egui::ComboBox::from_id_salt("language-library-task")
+                .selected_text(self.task.map_or("All tasks", |index| TASKS[index].1))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.task, None, "All tasks");
+                    for (index, (_, label)) in TASKS.iter().enumerate() {
+                        ui.selectable_value(&mut self.task, Some(index), *label);
+                    }
+                });
+            ui.add(
+                egui::TextEdit::singleline(&mut self.search).hint_text("Find a language or task"),
+            );
+        });
+        let query = self.search.trim().to_lowercase();
+        let matches: Vec<_> = languages
+            .iter()
+            .filter(|row| {
+                let tags = TASKS
+                    .iter()
+                    .filter(|(key, _)| row.tasks.iter().any(|task| task == key));
+                self.task
+                    .is_none_or(|index| row.tasks.iter().any(|task| task == TASKS[index].0))
+                    && (query.is_empty()
+                        || [&row.name, &row.fit, &row.why, &row.tradeoff, &row.example]
+                            .iter()
+                            .any(|text| text.to_lowercase().contains(&query))
+                        || tags.clone().any(|(key, label)| {
+                            key.contains(&query) || label.to_lowercase().contains(&query)
+                        }))
+            })
+            .collect();
+
+        ui.label(format!(
+            "{} of {} languages",
+            matches.len(),
+            languages.len()
+        ));
+        egui::ScrollArea::vertical().id_salt("language-library-results").show(ui, |ui| {
+            ui.collapsing(".NET and .NET Framework", |ui| {
+                ui.label("C# and Visual Basic are languages. .NET is the runtime, libraries, and SDK that can run their code. Modern .NET is cross-platform, while .NET Framework is the older Windows-only implementation. Some modern .NET app frameworks still require Windows.");
+                ui.hyperlink_to(
+                    "Microsoft’s .NET platform guide",
+                    "https://learn.microsoft.com/en-us/dotnet/standard/choosing-core-framework-server",
+                );
+            });
+            for row in matches {
+                ui.separator();
+                ui.heading(&row.name);
+                ui.label(TASKS.iter().filter(|(key, _)| row.tasks.iter().any(|task| task == key))
+                    .map(|(_, label)| *label).collect::<Vec<_>>().join(" / "));
+                for (label, text) in [
+                    ("Good fit", &row.fit),
+                    ("Why pick it", &row.why),
+                    ("Tradeoff", &row.tradeoff),
+                    ("Try building", &row.example),
+                ] {
+                    ui.label(format!("{label}: {text}"));
+                }
+                ui.hyperlink_to(format!("{} documentation", row.name), &row.docs);
+            }
+        });
+    }
+}
+
+fn languages() -> &'static [Language] {
+    // Snapshot of the public Straconis.dev Language Library, available offline.
+    static LANGUAGES: std::sync::OnceLock<Vec<Language>> = std::sync::OnceLock::new();
+    LANGUAGES.get_or_init(|| {
+        serde_json::from_str(include_str!("../assets/languages.json"))
+            .expect("bundled Language Library must be valid")
+    })
+}
