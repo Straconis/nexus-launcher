@@ -31,7 +31,7 @@ final class Nexus_API {
             },'permission_callback'=>$auth?[Nexus_Auth::class,'permission']:'__return_true']);
         }
     }
-    public static function health(): array { return ['status'=>'ok','version'=>'0.3.0-alpha','service'=>'wordpress','plugin_version'=>'0.1.0']; }
+    public static function health(): array { return ['status'=>'ok','version'=>'0.4.0-alpha','service'=>'wordpress','plugin_version'=>'0.2.0']; }
     public static function account($request) { return Nexus_Auth::caller($request); }
     public static function visible(array $app,?array $caller): bool {
         return $app['published'] && ($app['visibility']==='public' || ($caller && ($caller['admin'] || Nexus_Store::get('grant',$app['id'].':'.$caller['github_id']))));
@@ -67,7 +67,7 @@ final class Nexus_API {
         return is_wp_error($counts)?$counts:Nexus_Github::languages($counts);
     }
     public static function validate(array $body, ?array $stamp_ids=null) {
-        foreach (['id','name','kind','summary','repo','homepage','category','visibility','project_status'] as $field) {
+        foreach (['id','name','kind','summary','repo','homepage','banner_url','category','visibility','project_status'] as $field) {
             if (isset($body[$field]) && !is_string($body[$field])) { return self::error('Project text fields must be strings.'); }
         }
         $id=$body['id']??''; $name=trim((string)($body['name']??'')); $kind=$body['kind']??'app';
@@ -87,7 +87,11 @@ final class Nexus_API {
         if ($status!==null && !in_array($status,$stamps,true)) { return self::error('Choose a configured status stamp.'); }
         $category=trim((string)($body['category']??''));
         if (mb_strlen($category)>60 || preg_match('/[\x00-\x1f\x7f]/',$category)) { return self::error('Category must be 60 characters or fewer without control characters.'); }
-        return ['id'=>$id,'name'=>$name,'kind'=>$kind,'summary'=>$summary,'repo'=>$repo?:null,'homepage'=>$homepage?:null,'category'=>$category?:null,'project_status'=>$status,'visibility'=>$visibility,'published'=>$body['published']??false];
+        $banner=trim((string)($body['banner_url']??'')); $banner_parts=$banner?wp_parse_url($banner):[];
+        if ($banner!=='' && (strlen($banner)>2048 || !$banner_parts || strtolower($banner_parts['scheme']??'')!=='https' || empty($banner_parts['host']) || isset($banner_parts['user']) || isset($banner_parts['pass']))) {
+            return self::error('Tile banner must be an HTTPS URL without credentials (2,048 bytes or fewer).');
+        }
+        return ['id'=>$id,'name'=>$name,'kind'=>$kind,'summary'=>$summary,'repo'=>$repo?:null,'homepage'=>$homepage?:null,'banner_url'=>$banner!==''?$banner:null,'category'=>$category?:null,'project_status'=>$status,'visibility'=>$visibility,'published'=>$body['published']??false];
     }
     public static function apps($request) {
         if ($request->get_method()==='GET') { return Nexus_Store::all('app'); }
@@ -96,6 +100,7 @@ final class Nexus_API {
         $app=self::validate($body); if (is_wp_error($app)) { return $app; }
         $existing=Nexus_Store::get('app',$app['id']);
         if ($existing && $existing['kind']!==$app['kind']) { return self::error('That id belongs to a different project kind.',409); }
+        if (!isset($body['banner_url'])) { $app['banner_url']=$existing['banner_url']??null; }
         Nexus_Store::put('app',$app['id'],$app);
         if ($app['category']) {
             $key=$app['kind']==='supported'?'nexus_project_types':'nexus_categories'; $list=get_option($key,[]);

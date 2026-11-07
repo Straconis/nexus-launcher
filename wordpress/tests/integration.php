@@ -138,4 +138,26 @@ $expired=str_repeat('e',64); Nexus_Store::put('session',hash('sha256',$expired),
 check(api('GET','/admin/apps',null,$expired)->get_status()===401,'expired admin session rejected');
 $serialized=wp_json_encode(api('GET','/catalog')->get_data());
 foreach (['private-client-secret','private-device-code','private-user-token','private-release-token','Straconis/private'] as $secret) { check(!str_contains($serialized,$secret),'catalog excludes secret '.$secret); }
+
+
+
+// Optional banners survive older desktop clients and can be cleared explicitly.
+foreach (['app','supported'] as $kind) {
+    $entry=['id'=>'banner-'.$kind,'name'=>'Banner test','kind'=>$kind,'homepage'=>'https://example.com','visibility'=>'public','published'=>true,'banner_url'=>'https://example.com/wp-content/uploads/banner.png'];
+    $valid=Nexus_API::validate($entry);
+    check(!is_wp_error($valid) && $valid['banner_url']===$entry['banner_url'],'banner validates for '.$kind);
+    Nexus_Store::put('app',$entry['id'],$valid);
+    unset($entry['banner_url']);
+    $request=new WP_REST_Request('POST'); $request->set_header('Content-Type','application/json'); $request->set_body(wp_json_encode($entry));
+    $saved=Nexus_API::apps($request);
+    check($saved['banner_url']==='https://example.com/wp-content/uploads/banner.png','older save preserves banner');
+    foreach (['http://example.com/banner.png','https://user:pass@example.com/banner.png','file:///tmp/banner.png'] as $invalid) {
+        $entry['banner_url']=$invalid;
+        check(is_wp_error(Nexus_API::validate($entry)),'reject invalid banner URL');
+    }
+    $entry['banner_url']='';
+    $request->set_body(wp_json_encode($entry)); $saved=Nexus_API::apps($request);
+    check($saved['banner_url']===null,'empty URL removes banner');
+}
+
 echo "PASS: $assertions WordPress integration assertions.\n";

@@ -36,6 +36,7 @@ pub struct AppRow {
     pub project_status: Option<String>,
     pub category: Option<String>,
     pub homepage: Option<String>,
+    pub banner_url: Option<String>,
     pub repo: Option<String>,
     pub visibility: Visibility,
     pub published: bool,
@@ -109,6 +110,17 @@ impl Database {
                 [],
             )
             .map_err(|err| err.to_string())?;
+        }
+        let has_banner: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('apps') WHERE name='banner_url')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|err| err.to_string())?;
+        if !has_banner {
+            conn.execute("ALTER TABLE apps ADD COLUMN banner_url TEXT", [])
+                .map_err(|err| err.to_string())?;
         }
         let has_stamps: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='status_stamps')", [], |row| row.get(0)).map_err(|err| err.to_string())?;
         if !has_stamps {
@@ -246,8 +258,8 @@ impl Database {
 
     pub fn upsert_app(&self, app: &AppRow, now: &str) -> Result<(), ApiFailure> {
         self.lock()?.execute(
-            "INSERT INTO apps (id, name, summary, category, homepage, repo, visibility, published, updated_at, project_status, kind)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            "INSERT INTO apps (id, name, summary, category, homepage, repo, visibility, published, updated_at, project_status, kind, banner_url)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULLIF(?12, ''))
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 summary = excluded.summary,
@@ -258,7 +270,8 @@ impl Database {
                 published = excluded.published,
                 updated_at = excluded.updated_at,
                 project_status = excluded.project_status,
-                kind = excluded.kind",
+                kind = excluded.kind,
+                banner_url = CASE WHEN ?12 IS NULL THEN apps.banner_url ELSE excluded.banner_url END",
             params![
                 app.id,
                 app.name,
@@ -270,7 +283,8 @@ impl Database {
                 i64::from(app.published),
                 now,
                 app.project_status,
-                app.kind
+                app.kind,
+                app.banner_url
             ],
         )?;
         Ok(())
@@ -306,7 +320,7 @@ impl Database {
     pub fn app(&self, id: &str) -> Result<Option<AppRow>, ApiFailure> {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, summary, category, homepage, repo, visibility, published, project_status, kind FROM apps WHERE id = ?1",
+            "SELECT id, name, summary, category, homepage, repo, visibility, published, project_status, kind, banner_url FROM apps WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
@@ -318,7 +332,7 @@ impl Database {
     pub fn apps(&self) -> Result<Vec<AppRow>, ApiFailure> {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, summary, category, homepage, repo, visibility, published, project_status, kind
+            "SELECT id, name, summary, category, homepage, repo, visibility, published, project_status, kind, banner_url
              FROM apps ORDER BY id",
         )?;
         let mut rows = stmt.query([])?;
@@ -399,6 +413,7 @@ fn read_app(row: &rusqlite::Row<'_>) -> Result<AppRow, rusqlite::Error> {
         published: row.get::<_, i64>(7)? != 0,
         project_status: row.get(8)?,
         kind: row.get(9)?,
+        banner_url: row.get(10)?,
     })
 }
 
@@ -412,6 +427,7 @@ impl From<&AppRow> for AdminApp {
             project_status: app.project_status.clone(),
             category: app.category.clone(),
             homepage: app.homepage.clone(),
+            banner_url: app.banner_url.clone(),
             repo: app.repo.clone(),
             visibility: app.visibility,
             published: app.published,

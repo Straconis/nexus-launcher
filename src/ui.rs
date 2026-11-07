@@ -19,6 +19,8 @@ use nexus_protocol::{CatalogApp, ReleaseMeta, Visibility};
 
 #[path = "central_panel.rs"]
 mod central_panel;
+#[path = "tile_banners.rs"]
+mod tile_banners;
 
 pub fn run(catalog_path: PathBuf) -> eframe::Result {
     let preferences = crate::preferences::load().unwrap_or_default();
@@ -61,6 +63,7 @@ struct NexusApp {
     open_maximized: bool,
     preferences_error: Option<String>,
     cards: Vec<Card>,
+    tile_banners: tile_banners::TileBanners,
     catalog_error: Option<String>,
     rate: Option<RateSnapshot>,
     limited_detail: Option<String>,
@@ -350,6 +353,7 @@ impl NexusApp {
             open_maximized: preferences.open_maximized,
             preferences_error: None,
             cards: Vec::new(),
+            tile_banners: tile_banners::TileBanners::new(),
             catalog_error: None,
             rate: None,
             limited_detail: None,
@@ -377,6 +381,7 @@ impl NexusApp {
     }
 
     fn reload(&mut self) {
+        self.tile_banners.retry_failed();
         self.limited_detail = None;
         self.queue_launcher_check();
         if let Some(server_url) = self.central.server_url.clone() {
@@ -901,6 +906,22 @@ impl Card {
 impl eframe::App for NexusApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
+        self.tile_banners.update(
+            ctx,
+            self.cards.iter().filter_map(|card| {
+                let url = card
+                    .entry
+                    .banner_url
+                    .as_deref()
+                    .filter(|url| !url.trim().is_empty())
+                    .or_else(|| {
+                        (card.entry.kind == "supported" && card.entry.id == "s3d-labs")
+                            .then_some(tile_banners::S3D_BANNER_URL)
+                    })?;
+                let visible = (card.entry.kind == "supported") == self.show_supported;
+                Some((url, visible))
+            }),
+        );
         let modal_open = self.confirm.is_some() || self.dialog_error.is_some();
         let mut actions = Vec::new();
         let chrome = if self.contrast_frame {
@@ -1178,6 +1199,39 @@ impl NexusApp {
                         ui.set_width(width - 30.0);
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                         ui.set_min_height(328.0);
+                        let custom_banner = card
+                            .entry
+                            .banner_url
+                            .as_deref()
+                            .filter(|url| !url.trim().is_empty())
+                            .or_else(|| {
+                                (card.entry.kind == "supported" && card.entry.id == "s3d-labs")
+                                    .then_some(tile_banners::S3D_BANNER_URL)
+                            })
+                            .and_then(|url| self.tile_banners.get(url))
+                            .cloned();
+                        let banner = custom_banner.or_else(|| {
+                            (card.entry.kind == "supported" && card.entry.id == "s3d-labs").then(
+                                || {
+                                    branding_texture(
+                                        ui.ctx(),
+                                        "s3d-labs-tile-banner",
+                                        include_bytes!(
+                                            "../assets/branding/s3d-labs-tile-banner.png"
+                                        ),
+                                    )
+                                },
+                            )
+                        });
+                        if let Some(banner) = banner {
+                            let width = ui.available_width();
+                            ui.add(
+                                egui::Image::from_texture(&banner)
+                                    .fit_to_exact_size(Vec2::new(width, width / 3.0))
+                                    .corner_radius(6),
+                            );
+                            ui.add_space(4.0);
+                        }
                         if let Some(category) = &card.entry.category {
                             ui.label(
                                 RichText::new(category.to_uppercase())
@@ -1249,14 +1303,6 @@ impl NexusApp {
     fn card_body(&self, ui: &mut egui::Ui, card: &Card) -> Vec<UiAction> {
         let mut actions = Vec::new();
         if card.entry.kind == "supported" {
-            if card.entry.id == "s3d-labs" {
-                let logo = branding_texture(
-                    ui.ctx(),
-                    "supported-s3d-labs",
-                    include_bytes!("../assets/branding/s3d-labs-logo.png"),
-                );
-                ui.add(egui::Image::from_texture(&logo).max_size(Vec2::splat(90.0)));
-            }
             if let Some(url) = &card.entry.homepage {
                 if cta(ui, "VISIT PROJECT", CtaKind::Primary, ui.available_width()).clicked() {
                     actions.push(UiAction::OpenUrl(url.clone()));
@@ -1540,6 +1586,7 @@ impl NexusApp {
                         project_status: self.central.draft_project_status.clone(),
                         category: Some(self.central.draft_category.clone()),
                         homepage: Some(self.central.draft_homepage.clone()),
+                        banner_url: Some(self.central.draft_banner_url.trim().to_owned()),
                         repo: Some(self.central.draft_repo.clone()),
                         visibility: if self.central.draft_private {
                             Visibility::Private
@@ -1860,6 +1907,7 @@ impl NexusApp {
                 project_status: app.project_status,
                 repo: if private_download { None } else { app.repo },
                 homepage: app.homepage,
+                banner_url: app.banner_url,
                 category: app.category,
                 executable: None,
                 asset_preference: Vec::new(),
@@ -1952,14 +2000,6 @@ impl NexusApp {
                 include_bytes!("../assets/branding/straconis-software-wordmark.png"),
                 Vec2::new(160.0, 50.0),
                 "https://straconis.dev",
-            );
-            ui.add_space(12.0);
-            brand_link(
-                ui,
-                "s3d-labs",
-                include_bytes!("../assets/branding/s3d-labs-logo.png"),
-                Vec2::splat(58.0),
-                "https://s3dlabs.com",
             );
         });
         ui.add_space(4.0);
@@ -2735,6 +2775,7 @@ mod tests {
             open_maximized: true,
             preferences_error: None,
             cards: Vec::new(),
+            tile_banners: tile_banners::TileBanners::new(),
             catalog_error: None,
             rate: None,
             limited_detail: None,
@@ -2872,6 +2913,7 @@ mod tests {
             status_stamp: None,
             category: None,
             homepage: None,
+            banner_url: None,
             repo: None,
             visibility: Visibility::Public,
         }]);

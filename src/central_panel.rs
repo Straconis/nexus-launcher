@@ -71,6 +71,7 @@ pub struct CentralPanel {
     pub draft_repo: String,
     pub draft_category: String,
     pub draft_homepage: String,
+    pub draft_banner_url: String,
     pub draft_private: bool,
     pub draft_login: String,
     pub selected: String,
@@ -122,6 +123,7 @@ impl CentralPanel {
             draft_repo: String::new(),
             draft_category: String::new(),
             draft_homepage: String::new(),
+            draft_banner_url: String::new(),
             draft_private: true,
             draft_login: String::new(),
             selected: String::new(),
@@ -427,6 +429,7 @@ impl CentralPanel {
                 self.draft_project_status = None;
                 self.draft_category.clear();
                 self.draft_homepage.clear();
+                self.draft_banner_url.clear();
                 self.draft_private = false;
                 self.editing_existing = false;
                 self.repo_input.clear();
@@ -502,6 +505,13 @@ impl CentralPanel {
                         self.draft_repo = app.repo.clone().unwrap_or_default();
                         self.draft_category = app.category.clone().unwrap_or_default();
                         self.draft_homepage = app.homepage.clone().unwrap_or_default();
+                        self.draft_banner_url = app.banner_url.clone().unwrap_or_else(|| {
+                            if app.kind == "supported" && app.id == "s3d-labs" {
+                                super::tile_banners::S3D_BANNER_URL.to_owned()
+                            } else {
+                                String::new()
+                            }
+                        });
                         self.draft_private = app.visibility == nexus_protocol::Visibility::Private;
                         self.editor_open = true;
                         show_editor = true;
@@ -720,6 +730,14 @@ impl CentralPanel {
                         .hint_text("https://"),
                 );
             });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Tile banner").color(MUTED));
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.draft_banner_url)
+                        .desired_width(240.0)
+                        .hint_text("https://…/banner.png"),
+                ).on_hover_text("Optional. Paste the File URL from WordPress Media Library. Use a direct HTTPS PNG or JPEG link, up to 4 MiB and 4096 pixels per side. A wide 3:1 image works best. Clear the URL to restore the default.");
+            });
             if cta(
                 ui,
                 "SAVE APP DETAILS",
@@ -874,6 +892,7 @@ mod tests {
                 project_status: None,
                 category: None,
                 homepage: None,
+                banner_url: None,
                 repo: Some("Straconis/frameweaver".into()),
                 visibility: nexus_protocol::Visibility::Public,
                 published,
@@ -946,6 +965,7 @@ mod tests {
             project_status: None,
             category: Some("Tools".into()),
             homepage: None,
+            banner_url: Some("https://example.com/banner.png".into()),
             repo: Some("Straconis/tool".into()),
             visibility: nexus_protocol::Visibility::Public,
             published: true,
@@ -997,6 +1017,7 @@ mod tests {
         }]);
         assert_eq!(panel.draft_id, "tool");
         assert_eq!(panel.draft_repo, "Straconis/tool");
+        assert_eq!(panel.draft_banner_url, "https://example.com/banner.png");
         assert!(!panel.draft_private);
     }
 }

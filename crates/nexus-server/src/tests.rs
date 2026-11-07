@@ -323,6 +323,7 @@ async fn access_control_blocks_anonymous_and_cross_user_downloads() {
             project_status: None,
             category: Some("tools".into()),
             homepage: Some("https://example.com/tool".into()),
+            banner_url: None,
             repo: Some("Straconis/private-tool".into()),
             visibility: Visibility::Private,
             published: false,
@@ -958,4 +959,79 @@ async fn public_metadata_is_cached_but_unpublishing_revokes_access() {
         StatusCode::OK
     );
     assert_eq!(harness.fake.metadata_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn tile_banners_round_trip_validate_and_preserve_older_client_saves() {
+    let harness = harness();
+    let app = &harness.app;
+    harness.fake.set_user(7, "steve");
+    let (admin, _) = login(app).await;
+    for kind in ["app", "supported"] {
+        let mut body = json!({
+            "id": kind, "name": "Banner project", "kind": kind,
+            "homepage": "https://example.com", "visibility": "public", "published": true,
+            "banner_url": "https://example.com/wp-content/uploads/banner.png"
+        });
+        let (status, _) = send(
+            app,
+            "POST",
+            "/v1/admin/apps",
+            Some(&admin),
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        body.as_object_mut().unwrap().remove("banner_url");
+        let (status, _) = send(
+            app,
+            "POST",
+            "/v1/admin/apps",
+            Some(&admin),
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        for path in ["/v1/catalog", "/v1/admin/apps"] {
+            let (_, saved) = send(app, "GET", path, Some(&admin), None).await;
+            let saved: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+            let item = saved
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["id"] == kind)
+                .unwrap();
+            assert_eq!(
+                item["banner_url"],
+                "https://example.com/wp-content/uploads/banner.png"
+            );
+        }
+        for invalid in [
+            "http://example.com/banner.png",
+            "https://user:password@example.com/banner.png",
+            "file:///tmp/banner.png",
+        ] {
+            body["banner_url"] = json!(invalid);
+            let (status, _) = send(
+                app,
+                "POST",
+                "/v1/admin/apps",
+                Some(&admin),
+                Some(body.clone()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+        }
+        body["banner_url"] = json!("");
+        let (status, _) = send(app, "POST", "/v1/admin/apps", Some(&admin), Some(body)).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, saved) = send(app, "GET", "/v1/catalog", None, None).await;
+        let saved: Vec<CatalogApp> = serde_json::from_slice(&saved).unwrap();
+        assert!(saved
+            .iter()
+            .find(|item| item.id == kind)
+            .unwrap()
+            .banner_url
+            .is_none());
+    }
 }

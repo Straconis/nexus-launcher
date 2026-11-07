@@ -37,7 +37,7 @@ jobs:
       - name: Package installable plugin and Hostinger bridge
         run: |
           mkdir -p dist
-          (cd wordpress && zip -qr ../dist/nexus-service-0.1.0.zip nexus-service)
+          (cd wordpress && zip -qr ../dist/nexus-service-0.2.0.zip nexus-service)
           (cd wordpress/hostinger-bridge && zip -qr ../../dist/nexus-hostinger-bridge-0.1.0.zip index.php .htaccess)
       - uses: actions/upload-artifact@v4
         with:

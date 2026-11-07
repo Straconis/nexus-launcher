@@ -87,6 +87,8 @@ pub struct CatalogApp {
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub homepage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner_url: Option<String>,
     /// Set only when `visibility` is public. Private source names stay on the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
@@ -107,6 +109,8 @@ pub struct AdminApp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub homepage: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     pub visibility: Visibility,
     pub published: bool,
@@ -126,6 +130,8 @@ pub struct UpsertApp {
     pub category: Option<String>,
     #[serde(default)]
     pub homepage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner_url: Option<String>,
     #[serde(default)]
     pub repo: Option<String>,
     pub visibility: Visibility,

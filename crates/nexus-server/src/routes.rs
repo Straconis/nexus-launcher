@@ -533,6 +533,7 @@ fn catalog_view(app: &AppRow, stamps: &[nexus_protocol::StatusStamp]) -> Catalog
             .cloned(),
         category: app.category.clone(),
         homepage: app.homepage.clone(),
+        banner_url: app.banner_url.clone(),
         repo: if app.visibility == Visibility::Public {
             app.repo.clone()
         } else {
@@ -614,6 +615,28 @@ fn validate_upsert(body: UpsertApp) -> Result<AppRow, ApiFailure> {
             "supported projects need a public listing and an https project link",
         ));
     }
+    let banner_url =
+        body.banner_url
+            .map(|value| {
+                let url = value.trim();
+                if url.is_empty() {
+                    return Ok(String::new());
+                }
+                let parsed = reqwest::Url::parse(url).ok().filter(|parsed| {
+                    parsed.scheme() == "https"
+                        && parsed.host_str().is_some()
+                        && parsed.username().is_empty()
+                        && parsed.password().is_none()
+                        && url.len() <= 2048
+                });
+                parsed.map(|parsed| parsed.to_string()).ok_or_else(|| {
+                    ApiFailure::new(
+            StatusCode::BAD_REQUEST, "invalid_banner_url",
+            "tile banner must be an HTTPS URL without credentials (2,048 bytes or fewer)",
+        )
+                })
+            })
+            .transpose()?;
     let category = policy::clean_optional(body.category).filter(|value| value.len() <= 40);
     Ok(AppRow {
         id,
@@ -623,6 +646,7 @@ fn validate_upsert(body: UpsertApp) -> Result<AppRow, ApiFailure> {
         project_status: body.project_status,
         category,
         homepage,
+        banner_url,
         repo,
         visibility: body.visibility,
         published: body.published,

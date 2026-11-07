@@ -1904,6 +1904,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -2342,7 +2344,7 @@ dependencies = [
 
 [[package]]
 name = "nexus-launcher"
-version = "0.3.2-alpha"
+version = "0.4.0-alpha"
 dependencies = [
  "chrono",
  "directories",
@@ -2366,14 +2368,14 @@ dependencies = [
 
 [[package]]
 name = "nexus-protocol"
-version = "0.3.2-alpha"
+version = "0.4.0-alpha"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "nexus-server"
-version = "0.3.2-alpha"
+version = "0.4.0-alpha"
 dependencies = [
  "async-trait",
  "axum",

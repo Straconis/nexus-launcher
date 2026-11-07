@@ -22,6 +22,7 @@ final class Nexus_Admin {
             if (!is_array($body)) { return Nexus_API::error('Each app must be an object.'); }
             $app=Nexus_API::validate($body,$ids); if (is_wp_error($app)) { return $app; }
             if (isset($seen[$app['id']])) { return Nexus_API::error('Duplicate app id in import.'); }
+            if (!isset($body['banner_url'])) { $app['banner_url']=Nexus_Store::get('app',$app['id'])['banner_url']??null; }
             $seen[$app['id']]=true; $apps[]=$app;
         }
         // Validate the whole import before writing. Imports upsert; unrelated catalog entries remain intact.
@@ -59,7 +60,7 @@ final class Nexus_Admin {
                     }
                 } elseif ($action==='app') {
                     $body=[];
-                    foreach (['id','name','kind','summary','repo','homepage','category','visibility','project_status'] as $key) { $body[$key]=(string)wp_unslash($_POST[$key]??''); }
+                    foreach (['id','name','kind','summary','repo','homepage','banner_url','category','visibility','project_status'] as $key) { $body[$key]=(string)wp_unslash($_POST[$key]??''); }
                     $body['project_status']=$body['project_status']?:null; $body['published']=!empty($_POST['published']);
                     $app=Nexus_API::validate($body);
                     if (is_wp_error($app)) { $notice=$app->get_error_message(); }
@@ -95,7 +96,7 @@ final class Nexus_Admin {
         $edit=$edit??['id'=>'','name'=>'','kind'=>'app','summary'=>'','repo'=>'','homepage'=>'','category'=>'','project_status'=>null,'visibility'=>'public','published'=>false];
         echo '<h2>'.($edit['id']?'Edit project':'Add project').'</h2><form method="post">'; wp_nonce_field('nexus_service_settings');
         echo '<input type="hidden" name="nexus_action" value="app"><table class="form-table">';
-        foreach (['id'=>'App id','name'=>'Display name','kind'=>'Project kind','summary'=>'Summary','repo'=>'GitHub owner/repo','homepage'=>'Homepage','category'=>'Category / project type','project_status'=>'Status stamp','visibility'=>'Visibility'] as $key=>$label) {
+        foreach (['id'=>'App id','name'=>'Display name','kind'=>'Project kind','summary'=>'Summary','repo'=>'GitHub owner/repo','homepage'=>'Homepage','banner_url'=>'Tile banner HTTPS URL','category'=>'Category / project type','project_status'=>'Status stamp','visibility'=>'Visibility'] as $key=>$label) {
             echo '<tr><th><label for="app_'.esc_attr($key).'">'.esc_html($label).'</label></th><td>';
             $choices=null;
             if ($key==='kind') { $choices=['app'=>'Software / hardware','supported'=>'Supported project']; }

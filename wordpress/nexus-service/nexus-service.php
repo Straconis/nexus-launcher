@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Straconis Nexus Service
  * Description: Central catalog, GitHub sign-in, and cached release information for Straconis Nexus Launcher.
- * Version: 0.1.0
+ * Version: 0.2.0
  * Requires at least: 6.5
  * Requires PHP: 8.1
  * Author: Straconis Software

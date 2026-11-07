@@ -23,6 +23,8 @@ pub struct AppEntry {
     #[serde(default)]
     pub homepage: Option<String>,
     #[serde(default)]
+    pub banner_url: Option<String>,
+    #[serde(default)]
     pub category: Option<String>,
     /// Relative path of the executable inside an extracted archive.
     #[serde(default)]

@@ -2,13 +2,13 @@
 Contributors: Straconis
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.1.0
+Stable tag: 0.2.0
 License: GPL-2.0-or-later
 
 Central catalog, GitHub device sign-in, and authenticated cached metadata for Straconis Nexus Launcher. Runs in PHP with the existing WordPress database; no background Rust service is required.
 
 == Installation ==
-1. Back up WordPress and its database. Upload nexus-service-0.1.0.zip through Plugins > Add New > Upload Plugin. Activate Straconis Nexus Service.
+1. Back up WordPress and its database. Upload nexus-service-0.2.0.zip through Plugins > Add New > Upload Plugin. Activate Straconis Nexus Service.
 2. Open Settings > Nexus Service. Enter the existing GitHub OAuth client id and secret (Device Flow enabled), and your numeric GitHub admin id. Private releases additionally require a repository-scoped server credential. Blank password fields retain existing credentials. No credentials are bundled in the ZIP.
 3. Paste nexus-catalog-import.json into Import existing catalog to migrate the existing entries, categories, project types, and stamps. Import data is private administrative data; do not put it in a web-accessible directory.
 4. Configure nexus.straconis.dev in Hostinger and enable HTTPS. DNS already points to straconis.dev via CNAME. The Hostinger hostname must serve the same WordPress installation, not an empty default folder or a redirect to the main site.

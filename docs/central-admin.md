@@ -1,6 +1,6 @@
 # Central catalog and per-user access
 
-This document describes the `0.3.2-alpha` broker. Release packaging includes a Windows per-user installer; see GitHub Releases for published artifacts. Launcher self-update is integrated alongside central catalog administration.
+This document describes the `0.4.0-alpha` broker. Release packaging includes a Windows per-user installer; see GitHub Releases for published artifacts. Launcher self-update is integrated alongside central catalog administration.
 
 ## What it is
 
