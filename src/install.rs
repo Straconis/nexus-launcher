@@ -134,10 +134,8 @@ pub fn detect(root: &Path, app_id: &str) -> InstallState {
 #[cfg(target_os = "windows")]
 fn stat_tracker_install(app_id: &str, record: &InstallRecord) -> Option<InstallRecord> {
     // This installer registers its actual installation directory, including custom paths.
-    use std::os::windows::ffi::OsStringExt;
-    use windows_sys::Win32::System::Registry::{
-        RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6464KEY,
-    };
+    use winreg::enums::{KEY_QUERY_VALUE, KEY_WOW64_64KEY};
+    use winreg::HKLM;
 
     if app_id != "stat-tracker"
         || record.app_id != app_id
@@ -150,37 +148,19 @@ fn stat_tracker_install(app_id: &str, record: &InstallRecord) -> Option<InstallR
         return None;
     }
 
-    fn registry_string(name: &str) -> Option<std::ffi::OsString> {
-        let key: Vec<u16> = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{C7BFF5B7-6991-4E88-BFB5-1FF55D64D680}_is1"
-            .encode_utf16().chain(Some(0)).collect();
-        let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
-        let mut value = vec![0u16; 32768];
-        let mut bytes = (value.len() * std::mem::size_of::<u16>()) as u32;
-        // The buffer is writable for bytes bytes and the key/name are NUL terminated.
-        let status = unsafe {
-            RegGetValueW(
-                HKEY_LOCAL_MACHINE,
-                key.as_ptr(),
-                name.as_ptr(),
-                RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
-                std::ptr::null_mut(),
-                value.as_mut_ptr().cast(),
-                &mut bytes,
-            )
-        };
-        if status != 0 {
-            return None;
-        }
-        let end = value.iter().position(|unit| *unit == 0)?;
-        (end != 0).then(|| std::ffi::OsString::from_wide(&value[..end]))
-    }
-
-    let directory = PathBuf::from(registry_string("InstallLocation")?);
+    let key = HKLM.open_subkey_with_flags(
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{C7BFF5B7-6991-4E88-BFB5-1FF55D64D680}_is1",
+        KEY_QUERY_VALUE | KEY_WOW64_64KEY,
+    ).ok()?;
+    let directory = PathBuf::from(
+        key.get_value::<std::ffi::OsString, _>("InstallLocation")
+            .ok()?,
+    );
     let executable = directory.join("StatTracker.exe");
     if !directory.is_absolute() || !executable.is_file() {
         return None;
     }
-    let version = registry_string("DisplayVersion")?.into_string().ok()?;
+    let version: String = key.get_value("DisplayVersion").ok()?;
     let mut installed = record.clone();
     installed.launch_path = Some(executable);
     installed.version = version;

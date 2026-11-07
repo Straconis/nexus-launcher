@@ -2087,6 +2087,30 @@ impl NexusApp {
                 Vec2::new(160.0, 50.0),
                 "https://straconis.dev",
             );
+            let texture = branding_texture(
+                ui.ctx(),
+                "discord-symbol",
+                include_bytes!("../assets/branding/discord-symbol.png"),
+            );
+            let label = "Join the S3D Labs Discord";
+            let response = ui
+                .add(
+                    egui::Button::image(
+                        egui::Image::from_texture(&texture)
+                            .fit_to_exact_size(Vec2::new(24.0, 18.0)),
+                    )
+                    .frame(false)
+                    .min_size(Vec2::splat(32.0)),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(label);
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Hyperlink, true, label)
+            });
+            if response.clicked() {
+                ui.ctx()
+                    .open_url(egui::OpenUrl::new_tab("https://discord.gg/n68NmABjjW"));
+            }
         });
         ui.add_space(4.0);
         let root = match &self.data_root {
