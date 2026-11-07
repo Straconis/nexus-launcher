@@ -13,6 +13,7 @@ use crate::central::{self, CentralClient};
 use crate::github::{self, FetchOutcome, RateSnapshot, SelectedAsset};
 use crate::install::{self, InstallRequest, InstallState};
 use crate::model::PackageKind;
+use crate::self_update::{self, Offer, Outcome};
 use crate::theme::{self, ACCENT, BG, BORDER, MUTED, PANEL, TEXT};
 use nexus_protocol::{CatalogApp, ReleaseMeta, Visibility};
 
@@ -73,6 +74,20 @@ struct NexusApp {
     dialog_error: Option<String>,
     children: Vec<Child>,
     central: central_panel::CentralPanel,
+    launcher: LauncherPhase,
+    launcher_offer: Option<Offer>,
+    launcher_note: Option<String>,
+    launcher_busy: Option<Busy>,
+}
+
+enum LauncherPhase {
+    Checking,
+    UpToDate,
+    Unsupported(String),
+    Ready,
+    Blocked(String),
+    Failed(String),
+    Restarting,
 }
 
 struct Card {
@@ -117,6 +132,8 @@ struct FetchTarget {
 enum Job {
     Fetch(Vec<FetchTarget>),
     Install(InstallRequest),
+    CheckLauncher,
+    ApplyLauncher(Offer),
 }
 
 enum CentralJob {
@@ -242,6 +259,15 @@ enum Event {
         id: String,
         result: Result<(), String>,
     },
+    LauncherChecked(self_update::Report),
+    LauncherProgress {
+        message: String,
+        fraction: Option<f32>,
+    },
+    LauncherReplaced {
+        exe: PathBuf,
+    },
+    LauncherFailed(String),
     Central(CentralEvent),
 }
 
@@ -283,6 +309,8 @@ enum UiAction {
     ConfirmInstall,
     CancelConfirm,
     DismissError,
+    CheckLauncher,
+    UpdateLauncher,
 }
 
 enum CtaKind {
@@ -339,6 +367,10 @@ impl NexusApp {
                     .and_then(|path| central::load_config(&path).ok().flatten())
                     .map(|config| config.server_url),
             ),
+            launcher: LauncherPhase::Checking,
+            launcher_offer: None,
+            launcher_note: None,
+            launcher_busy: None,
         };
         app.reload();
         app
@@ -346,6 +378,7 @@ impl NexusApp {
 
     fn reload(&mut self) {
         self.limited_detail = None;
+        self.queue_launcher_check();
         if let Some(server_url) = self.central.server_url.clone() {
             self.catalog_error = None;
             self.status = "Checking central catalog…".into();
@@ -362,6 +395,14 @@ impl NexusApp {
         }
         self.recompute_banner();
         self.refresh_status();
+    }
+
+    fn queue_launcher_check(&mut self) {
+        self.launcher = LauncherPhase::Checking;
+        self.launcher_busy = None;
+        if self.jobs.send(Job::CheckLauncher).is_err() {
+            self.launcher = LauncherPhase::Failed("Background worker stopped.".into());
+        }
     }
 
     fn queue_fetches(&mut self) {
@@ -462,6 +503,66 @@ impl NexusApp {
                     }
                 }
             }
+            Event::LauncherChecked(report) => self.apply_launcher_report(report),
+            Event::LauncherProgress { message, fraction } => {
+                self.launcher_busy = Some(Busy { message, fraction });
+                self.status = "Updating launcher…".into();
+            }
+            Event::LauncherReplaced { exe } => self.restart_into(exe),
+            Event::LauncherFailed(message) => {
+                self.launcher_busy = None;
+                self.launcher = LauncherPhase::Failed(message.clone());
+                self.status = "Launcher update failed".into();
+                self.dialog_error = Some(message);
+            }
+        }
+    }
+
+    fn apply_launcher_report(&mut self, report: self_update::Report) {
+        if let Some(rate) = report.rate {
+            self.rate = Some(rate);
+            self.recompute_banner();
+        }
+        self.launcher_busy = None;
+        self.launcher_offer = None;
+        self.launcher_note = None;
+        match report.outcome {
+            Outcome::UpToDate => self.launcher = LauncherPhase::UpToDate,
+            Outcome::Unsupported(message) => self.launcher = LauncherPhase::Unsupported(message),
+            Outcome::Available { offer, skipped } => {
+                self.launcher_note =
+                    skipped.map(|skip| format!("{} was skipped ({})", skip.tag, skip.reason));
+                self.launcher_offer = Some(offer);
+                self.launcher = LauncherPhase::Ready;
+            }
+            Outcome::Blocked { tag, reason } => {
+                self.launcher = LauncherPhase::Blocked(format!(
+                    "{tag} is newer but cannot be installed: {reason}."
+                ));
+            }
+            Outcome::Failed(message) => self.launcher = LauncherPhase::Failed(message),
+            Outcome::RateLimited(message) => {
+                self.limited_detail = Some(message.clone());
+                self.recompute_banner();
+                self.launcher = LauncherPhase::Failed(message);
+            }
+        }
+    }
+
+    fn restart_into(&mut self, exe: PathBuf) {
+        self.launcher_busy = None;
+        self.launcher = LauncherPhase::Restarting;
+        self.status = "Restarting launcher…".into();
+        match self_update::spawn_restart(&exe) {
+            Ok(_) => std::process::exit(0),
+            Err(err) => {
+                let message = format!(
+                    "The new build is installed but it did not start ({err}). Start {} again.",
+                    exe.display()
+                );
+                self.launcher = LauncherPhase::Failed(message.clone());
+                self.dialog_error = Some(message);
+            }
         }
     }
 
@@ -526,16 +627,29 @@ impl NexusApp {
     }
 
     fn refresh_status(&mut self) {
-        let busy = self.cards.iter().any(Card::is_busy);
-        if busy && self.status == "Ready" {
-            self.status = "Checking releases…".into();
-        } else if !busy && self.status.starts_with("Checking") {
+        if self.launcher_busy.is_some() || matches!(self.launcher, LauncherPhase::Restarting) {
+            return;
+        }
+        let cards_busy = self.cards.iter().any(Card::is_busy);
+        let checking_launcher = matches!(self.launcher, LauncherPhase::Checking);
+        if (cards_busy || checking_launcher) && self.status == "Ready" {
+            self.status = if checking_launcher && !cards_busy {
+                "Checking for launcher updates…".into()
+            } else {
+                "Checking releases…".into()
+            };
+        } else if !cards_busy && !checking_launcher && self.status.starts_with("Checking") {
             self.status = "Ready".into();
         }
     }
 
     fn working(&self) -> bool {
         self.cards.iter().any(Card::is_busy)
+            || self.launcher_busy.is_some()
+            || matches!(
+                self.launcher,
+                LauncherPhase::Checking | LauncherPhase::Restarting
+            )
     }
 
     fn handle(&mut self, action: UiAction) {
@@ -559,6 +673,26 @@ impl NexusApp {
             }
             UiAction::CancelConfirm => self.confirm = None,
             UiAction::DismissError => self.dialog_error = None,
+            UiAction::CheckLauncher => self.queue_launcher_check(),
+            UiAction::UpdateLauncher => self.begin_launcher_update(),
+        }
+    }
+
+    fn begin_launcher_update(&mut self) {
+        if self.launcher_busy.is_some() {
+            return;
+        }
+        let Some(offer) = self.launcher_offer.clone() else {
+            return;
+        };
+        self.launcher_busy = Some(Busy {
+            message: "Starting update".into(),
+            fraction: Some(0.0),
+        });
+        self.status = format!("Updating launcher to {}…", offer.tag);
+        if self.jobs.send(Job::ApplyLauncher(offer)).is_err() {
+            self.launcher_busy = None;
+            self.launcher = LauncherPhase::Failed("Background worker stopped.".into());
         }
     }
 
@@ -818,6 +952,7 @@ impl eframe::App for NexusApp {
                 }
                 ui.add_enabled_ui(!modal_open, |ui| {
                     actions.extend(self.central_actions(ui));
+                    actions.extend(self.launcher_strip(ui));
                     actions.extend(self.banners(ui));
                     actions.extend(self.grid(ui));
                 });
@@ -1847,6 +1982,129 @@ impl NexusApp {
         ));
     }
 
+    fn launcher_strip(&self, ui: &mut egui::Ui) -> Vec<UiAction> {
+        let mut actions = Vec::new();
+        Frame::new()
+            .fill(PANEL)
+            .stroke(Stroke::new(1.0_f32, BORDER))
+            .inner_margin(12)
+            .corner_radius(8)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let width = ui.available_width();
+                    ui.vertical(|ui| {
+                        ui.set_max_width((width - 340.0).max(220.0));
+                        ui.label(
+                            RichText::new("LAUNCHER")
+                                .family(theme::orbitron())
+                                .size(11.0)
+                                .color(ACCENT),
+                        );
+                        ui.label(
+                            RichText::new(self.launcher_headline())
+                                .color(TEXT)
+                                .size(14.0),
+                        );
+                        if let Some(detail) = self.launcher_detail() {
+                            ui.label(RichText::new(detail).color(MUTED).size(12.0));
+                        }
+                        if let Some(busy) = &self.launcher_busy {
+                            let fraction = busy.fraction.unwrap_or(0.0);
+                            ui.add(egui::ProgressBar::new(fraction).fill(ACCENT).animate(true));
+                        }
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        actions.extend(self.launcher_buttons(ui));
+                    });
+                });
+            });
+        ui.add_space(12.0);
+        actions
+    }
+
+    fn launcher_headline(&self) -> String {
+        let version = format!("v{}", self_update::VERSION);
+        if let Some(busy) = &self.launcher_busy {
+            return format!("{version}  ·  {}", busy.message);
+        }
+        match &self.launcher {
+            LauncherPhase::Checking => format!("{version}  ·  checking for updates"),
+            LauncherPhase::UpToDate => format!("{version}  ·  up to date"),
+            LauncherPhase::Unsupported(message) => format!("{version}  ·  {message}"),
+            LauncherPhase::Ready => {
+                let tag = self
+                    .launcher_offer
+                    .as_ref()
+                    .map(|offer| offer.tag.as_str())
+                    .unwrap_or("a newer release");
+                format!("{version}  ·  update available  ·  {tag}")
+            }
+            LauncherPhase::Blocked(message) | LauncherPhase::Failed(message) => {
+                format!("{version}  ·  {message}")
+            }
+            LauncherPhase::Restarting => format!("{version}  ·  restarting"),
+        }
+    }
+
+    fn launcher_detail(&self) -> Option<String> {
+        match &self.launcher {
+            LauncherPhase::Ready => {
+                let asset = self
+                    .launcher_offer
+                    .as_ref()
+                    .map(|offer| offer.asset.name.as_str())
+                    .unwrap_or("archive");
+                let mut text =
+                    format!("{asset}  ·  SHA-256 required  ·  replaces this program only");
+                if let Some(note) = &self.launcher_note {
+                    text = format!("{text}  ·  {note}");
+                }
+                Some(text)
+            }
+            LauncherPhase::UpToDate => {
+                Some("Prerelease builds also see newer alphas. A stable build does not.".into())
+            }
+            LauncherPhase::Checking if self.launcher_busy.is_none() => Some(
+                "Looks through GitHub releases, not releases/latest, so newer alphas stay visible."
+                    .into(),
+            ),
+            _ => None,
+        }
+    }
+
+    fn launcher_buttons(&self, ui: &mut egui::Ui) -> Vec<UiAction> {
+        let mut actions = Vec::new();
+        let busy = self.launcher_busy.is_some();
+        if busy
+            || matches!(
+                self.launcher,
+                LauncherPhase::Checking | LauncherPhase::Restarting
+            )
+        {
+            let label = if matches!(self.launcher, LauncherPhase::Restarting) {
+                "RESTARTING"
+            } else if busy {
+                "UPDATING"
+            } else {
+                "CHECKING"
+            };
+            let _ = cta(ui, label, CtaKind::Disabled, 168.0);
+            return actions;
+        }
+        let can_update = self.launcher_offer.is_some()
+            && matches!(
+                self.launcher,
+                LauncherPhase::Ready | LauncherPhase::Failed(_)
+            );
+        if can_update && cta(ui, "UPDATE LAUNCHER", CtaKind::Primary, 210.0).clicked() {
+            actions.push(UiAction::UpdateLauncher);
+        }
+        if cta(ui, "CHECK", CtaKind::Secondary, 110.0).clicked() {
+            actions.push(UiAction::CheckLauncher);
+        }
+        actions
+    }
+
     fn dialogs(&self, ctx: &egui::Context) -> Vec<UiAction> {
         let mut actions = Vec::new();
         if let Some(pending) = &self.confirm {
@@ -2070,6 +2328,11 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
         match job {
             Job::Fetch(targets) => fetch_all(&client, &targets, &events),
             Job::Install(request) => install_job(&client, request, &events),
+            Job::CheckLauncher => {
+                let report = self_update::check(&client);
+                let _ = events.send(Event::LauncherChecked(report));
+            }
+            Job::ApplyLauncher(offer) => apply_launcher(&client, offer, &events),
         }
     }
 }
@@ -2089,6 +2352,50 @@ fn report_client_failure(events: &Sender<Event>, job: Job, message: &str) {
                 id: request.app_id,
                 result: Err(message.to_string()),
             });
+        }
+        Job::CheckLauncher => {
+            let _ = events.send(Event::LauncherChecked(self_update::Report {
+                current: self_update::VERSION,
+                outcome: Outcome::Failed(message.to_string()),
+                rate: None,
+            }));
+        }
+        Job::ApplyLauncher(_) => {
+            let _ = events.send(Event::LauncherFailed(message.to_string()));
+        }
+    }
+}
+
+fn apply_launcher(client: &reqwest::blocking::Client, offer: Offer, events: &Sender<Event>) {
+    let exe = match self_update::running_executable() {
+        Ok(path) => path,
+        Err(err) => {
+            let _ = events.send(Event::LauncherFailed(format!(
+                "could not find the running program: {err}. The current program was not changed."
+            )));
+            return;
+        }
+    };
+    let home = self_update::update_home();
+    let request = self_update::DownloadApply {
+        offer,
+        target_exe: exe,
+        staging_dir: self_update::staging_dir(&home),
+        state_path: self_update::state_path(&home),
+        platform: catalog::current_platform(),
+    };
+    let tx = events.clone();
+    match self_update::download_and_apply(client, &request, |message, fraction| {
+        let _ = tx.send(Event::LauncherProgress {
+            message: message.to_string(),
+            fraction,
+        });
+    }) {
+        Ok(exe) => {
+            let _ = events.send(Event::LauncherReplaced { exe });
+        }
+        Err(err) => {
+            let _ = events.send(Event::LauncherFailed(err.to_string()));
         }
     }
 }
@@ -2441,7 +2748,31 @@ mod tests {
             dialog_error: None,
             children: Vec::new(),
             central: central_panel::CentralPanel::new(None),
+            launcher: LauncherPhase::UpToDate,
+            launcher_offer: None,
+            launcher_note: None,
+            launcher_busy: None,
         }
+    }
+
+    #[test]
+    fn central_reload_checks_launcher_without_loading_local_catalog() {
+        let mut app = app();
+        let (jobs, received_jobs) = mpsc::channel();
+        let (central_jobs, received_central) = mpsc::channel();
+        app.jobs = jobs;
+        app.central_jobs = central_jobs;
+        app.central = central_panel::CentralPanel::new(Some("https://nexus.example.com".into()));
+        app.catalog_path = PathBuf::from("missing-local-catalog.toml");
+
+        app.reload();
+
+        assert!(matches!(received_jobs.try_recv(), Ok(Job::CheckLauncher)));
+        assert!(
+            matches!(received_central.try_recv(), Ok(CentralJob::LoadSession { server_url }) if server_url == "https://nexus.example.com")
+        );
+        assert!(app.catalog_error.is_none());
+        assert!(matches!(app.launcher, LauncherPhase::Checking));
     }
 
     #[test]

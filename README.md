@@ -19,9 +19,9 @@ cargo test
 
 ## Downloads
 
-Tagged releases publish binaries on [GitHub Releases](https://github.com/Straconis/nexus-launcher/releases). The 0.3.0-alpha packaging includes:
+Tagged releases publish binaries on [GitHub Releases](https://github.com/Straconis/nexus-launcher/releases). The 0.3.1-alpha packaging includes:
 
-- `nexus-launcher-setup-0.3.0-alpha-windows-x86_64.exe` — Windows per-user installer
+- `nexus-launcher-setup-0.3.1-alpha-windows-x86_64.exe` — Windows per-user installer
 - `nexus-launcher-windows-x86_64.zip` — Windows portable build
 - `nexus-launcher-linux-x86_64.tar.gz` — Linux binary and seed catalog
 - `SHA256SUMS.txt`
@@ -32,13 +32,38 @@ Portable archives can be extracted anywhere writable; run the included executabl
 
 The launcher works from its local catalog without a broker. Central administration needs a separately running broker and a reachable `server_url` in the user's `central.toml`; the installer does not bundle server credentials or point to the developer's local VM. See [Central catalog](#central-catalog). macOS binaries are not included.
 
-The source version is **0.3.0-alpha**; consult the Releases page for published artifacts. The separate launcher-self-update branch is not merged here. Individual managed-app updates are available through **REFRESH** and **UPDATE**.
+The source version is **0.3.1-alpha**; consult the Releases page for published artifacts. Launcher self-update is integrated in this branch. Individual managed-app updates are available through **REFRESH** and **UPDATE**.
 
 ## Central catalog
 
 An optional broker, `nexus-server`, holds an explicit app list and per-user grants. GitHub login identifies people by numeric user id. Private builds are downloaded through the broker, so a regular user does not need access to the private source repository. Cards are not filtered only in the window: catalog, release, and download requests are checked on the server. The local `catalog/apps.toml` file still works when no broker is configured. Website repositories and WordPress plugins are not imported.
 
 Setup, the device-flow choice, permissions, and what was not tested against a live GitHub app are in [docs/central-admin.md](docs/central-admin.md). Example environment names, with empty secrets, are in [deploy/nexus-server.env.example](deploy/nexus-server.env.example).
+
+**Published `v0.1.0-alpha` and `v0.3.0-alpha` builds cannot update themselves.** Those downloads were built before self-update was integrated. Install the first release containing this change by hand (see [Updating Nexus Launcher](#updating-nexus-launcher)). After that, the window can install newer releases.
+
+## Updating Nexus Launcher
+
+The **LAUNCHER** strip in the window shows this build's version and whether a newer release of Nexus Launcher itself is available. **UPDATE LAUNCHER** downloads it. The check runs on a background thread. Nothing is downloaded until you press the button.
+
+The check uses the GitHub release list for `Straconis/nexus-launcher`, not `releases/latest`. GitHub's latest endpoint hides prereleases, so an alpha build would never see the next alpha. A prerelease version (this tree is `0.3.1-alpha`) is offered a newer prerelease or a newer stable release. A stable version is not offered prereleases. The comparison is semver, after a leading `v` is removed. The same version is not offered again, and an older tag is not a downgrade. A tag that was already applied is remembered under the data directory so a replaced build cannot immediately install that same tag again.
+
+Only the official archive for this machine is eligible:
+
+| OS | Archive |
+| --- | --- |
+| Linux x86_64 | `nexus-launcher-linux-x86_64.tar.gz` |
+| Windows x86_64 | `nexus-launcher-windows-x86_64.zip` |
+
+Anything else (AppImage, deb, MSI, a macOS archive, another CPU) is ignored. The release must publish a SHA-256 digest or `SHA256SUMS.txt` that lists that archive. There is no "install anyway" for the launcher. A bad or missing checksum deletes the download and leaves the program you are running in place.
+
+The swap replaces that one executable. It does not copy `catalog/apps.toml` over yours, and it does not touch installed tools under the data directory. On Windows the running file is renamed aside (a running `.exe` often cannot be overwritten in place) and the new file takes its name. If the folder is not writable, the update stops and does not ask for administrator rights. If the new file cannot be moved into place, the previous executable is restored. The new build is started with the same arguments and the old process exits. The next launch deletes the `.old` backup when the operating system allows it.
+
+Limits:
+
+- macOS has no published binary, so the strip says self-update is not available there.
+- The tag in `Cargo.toml` is the version the binary reports. A release tag must be `v` plus that version or the running copy will not recognize itself and may offer the release you just installed. `v0.3.0-alpha` is already published without the updater; this integration uses the new version and tag `v0.3.1-alpha`.
+- Published `v0.1.0-alpha` and `v0.3.0-alpha` builds do not contain this code. Users of those files need one manual download. Self-update starts with the first release built from this change.
 
 ## What it is
 
@@ -173,7 +198,7 @@ A tray icon needs `tray-icon` (or the platform shell) beside eframe's event loop
 
 ## Tests
 
-`cargo test` does not open a window and does not call GitHub. It covers catalog validation, the `--check` flag, release JSON and rate-limit classification, asset selection, SHA-256 sums, zip and tar.gz extraction, zip-slip rejection, and install-record detection.
+`cargo test` does not open a window and does not call GitHub. It covers catalog validation, the `--check` flag, release JSON and rate-limit classification, asset selection, SHA-256 sums, zip and tar.gz extraction, zip-slip rejection, and install-record detection. Self-update tests cover prerelease selection (including an alpha that `releases/latest` would hide), stable builds ignoring newer alphas, missing checksums, the official Linux and Windows archive names, a failed checksum, a zip-slip archive, an archive with no launcher binary, rollback when the new file cannot be moved into place, and replacement of an open executable without touching a custom catalog or installed apps. Those replacement tests run on Linux and in Windows CI. The read-only directory case runs on Linux, where a mode of `0555` can refuse the write without granting extra privileges.
 
 ## License
 

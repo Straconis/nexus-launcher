@@ -1,8 +1,8 @@
 #ifndef AppVersion
-  #define AppVersion "0.3.0-alpha"
+  #define AppVersion "0.3.1-alpha"
 #endif
 #ifndef VersionNumbers
-  #define VersionNumbers "0.3.0.0"
+  #define VersionNumbers "0.3.1.0"
 #endif
 #define AppName "Straconis Software Dev Nexus Launcher"
 #define StagePath "dist\nexus-launcher-windows-x86_64"

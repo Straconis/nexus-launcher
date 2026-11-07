@@ -12,6 +12,7 @@ pub mod install;
 pub mod model;
 pub mod preferences;
 pub mod repo_input;
+pub mod self_update;
 
 #[cfg(feature = "gui")]
 mod theme;

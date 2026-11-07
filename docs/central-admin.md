@@ -1,6 +1,6 @@
 # Central catalog and per-user access
 
-This document describes the `0.3.0-alpha` broker. It is not a released build. Release packaging includes a Windows per-user installer; see GitHub Releases for published artifacts. The self-update work on pull request #2 stays on `0.1.1-alpha` and is not part of this branch.
+This document describes the `0.3.1-alpha` broker. Release packaging includes a Windows per-user installer; see GitHub Releases for published artifacts. Launcher self-update is integrated alongside central catalog administration.
 
 ## What it is
 

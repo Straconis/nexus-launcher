@@ -1,4 +1,7 @@
-//! Unauthenticated `GET /repos/{owner}/{repo}/releases/latest`.
+//! Unauthenticated GitHub release lookups.
+//!
+//! Catalog installs use `releases/latest`. That endpoint hides prereleases, so
+//! launcher self-update uses the release list instead.
 
 use std::time::Duration;
 
@@ -98,6 +101,19 @@ struct GhRelease {
 }
 
 #[derive(Debug, Deserialize)]
+struct GhListedRelease {
+    tag_name: String,
+    #[serde(default)]
+    html_url: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    assets: Vec<GhAsset>,
+}
+
+#[derive(Debug, Deserialize)]
 struct GhAsset {
     name: String,
     browser_download_url: String,
@@ -144,25 +160,58 @@ pub fn fetch_latest(
         Ok(url) => url,
         Err(err) => return (FetchOutcome::Failed(err), RateSnapshot::default()),
     };
-    let response = match client
-        .get(url)
-        .header(ACCEPT, "application/vnd.github+json")
-        .header(USER_AGENT, user_agent_value())
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-    {
-        Ok(response) => response,
-        Err(err) => {
-            return (
-                FetchOutcome::Failed(format!("network error: {err}")),
-                RateSnapshot::default(),
-            )
-        }
+    match github_text(client, &url) {
+        Ok((status, rate, body)) => (interpret(status, rate.remaining, &body), rate),
+        Err(err) => (FetchOutcome::Failed(err), RateSnapshot::default()),
+    }
+}
+
+/// One page of `GET /repos/{owner}/{repo}/releases`, including prereleases.
+///
+/// `releases/latest` is the wrong call for a prerelease channel: GitHub omits
+/// prereleases from that endpoint even when they are newer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedRelease {
+    pub tag: String,
+    pub html_url: String,
+    pub draft: bool,
+    pub prerelease: bool,
+    pub assets: Vec<Asset>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListOutcome {
+    Releases(Vec<ListedRelease>),
+    Missing,
+    RateLimited(String),
+    Failed(String),
+}
+
+pub fn fetch_release_page(
+    client: &reqwest::blocking::Client,
+    repo: &str,
+    page: u32,
+    per_page: u32,
+) -> (ListOutcome, RateSnapshot) {
+    let url = match releases_list_url(repo, page, per_page) {
+        Ok(url) => url,
+        Err(err) => return (ListOutcome::Failed(err), RateSnapshot::default()),
     };
-    let rate = RateSnapshot::from_headers(response.headers());
-    let status = response.status().as_u16();
-    let body = response.text().unwrap_or_default();
-    (interpret(status, rate.remaining, &body), rate)
+    match github_text(client, &url) {
+        Ok((status, rate, body)) => (interpret_release_list(status, rate.remaining, &body), rate),
+        Err(err) => (ListOutcome::Failed(err), RateSnapshot::default()),
+    }
+}
+
+pub fn releases_list_url(repo: &str, page: u32, per_page: u32) -> Result<String, String> {
+    if !crate::catalog::is_github_repo(repo) {
+        return Err(format!("invalid GitHub repo '{repo}'"));
+    }
+    let page = page.max(1);
+    let per_page = per_page.clamp(1, 100);
+    Ok(format!(
+        "https://api.github.com/repos/{repo}/releases?per_page={per_page}&page={page}"
+    ))
 }
 
 pub fn fetch_languages(
@@ -202,8 +251,45 @@ pub fn releases_url(repo: &str) -> Result<String, String> {
 }
 
 pub fn interpret(status: u16, remaining: Option<u32>, body: &str) -> FetchOutcome {
+    match classify_status(status, remaining, body) {
+        ApiClass::Missing => FetchOutcome::Missing,
+        ApiClass::RateLimited(text) => FetchOutcome::RateLimited(text),
+        ApiClass::Failed(text) => FetchOutcome::Failed(text),
+        ApiClass::Ok => match serde_json::from_str::<GhRelease>(body) {
+            Ok(release) => FetchOutcome::Release(Release {
+                tag: release.tag_name,
+                html_url: release.html_url,
+                assets: release.assets.into_iter().map(asset_from_gh).collect(),
+            }),
+            Err(err) => FetchOutcome::Failed(format!("could not parse release JSON: {err}")),
+        },
+    }
+}
+
+pub fn interpret_release_list(status: u16, remaining: Option<u32>, body: &str) -> ListOutcome {
+    match classify_status(status, remaining, body) {
+        ApiClass::Missing => ListOutcome::Missing,
+        ApiClass::RateLimited(text) => ListOutcome::RateLimited(text),
+        ApiClass::Failed(text) => ListOutcome::Failed(text),
+        ApiClass::Ok => match serde_json::from_str::<Vec<GhListedRelease>>(body) {
+            Ok(releases) => {
+                ListOutcome::Releases(releases.into_iter().map(listed_from_gh).collect())
+            }
+            Err(err) => ListOutcome::Failed(format!("could not parse release list JSON: {err}")),
+        },
+    }
+}
+
+enum ApiClass {
+    Ok,
+    Missing,
+    RateLimited(String),
+    Failed(String),
+}
+
+fn classify_status(status: u16, remaining: Option<u32>, body: &str) -> ApiClass {
     if status == 404 {
-        return FetchOutcome::Missing;
+        return ApiClass::Missing;
     }
     let message = serde_json::from_str::<GhErrorBody>(body)
         .ok()
@@ -214,30 +300,50 @@ pub fn interpret(status: u16, remaining: Option<u32>, body: &str) -> FetchOutcom
         let lower = text.to_ascii_lowercase();
         if remaining == Some(0) || lower.contains("rate limit") || lower.contains("secondary rate")
         {
-            return FetchOutcome::RateLimited(text);
+            return ApiClass::RateLimited(text);
         }
-        return FetchOutcome::Failed(text);
+        return ApiClass::Failed(text);
     }
     if (200..300).contains(&status) {
-        return match serde_json::from_str::<GhRelease>(body) {
-            Ok(release) => FetchOutcome::Release(Release {
-                tag: release.tag_name,
-                html_url: release.html_url,
-                assets: release
-                    .assets
-                    .into_iter()
-                    .map(|asset| Asset {
-                        name: asset.name,
-                        url: asset.browser_download_url,
-                        size: asset.size,
-                        digest: asset.digest,
-                    })
-                    .collect(),
-            }),
-            Err(err) => FetchOutcome::Failed(format!("could not parse release JSON: {err}")),
-        };
+        return ApiClass::Ok;
     }
-    FetchOutcome::Failed(message.unwrap_or_else(|| format!("GitHub API status {status}")))
+    ApiClass::Failed(message.unwrap_or_else(|| format!("GitHub API status {status}")))
+}
+
+fn github_text(
+    client: &reqwest::blocking::Client,
+    url: &str,
+) -> Result<(u16, RateSnapshot, String), String> {
+    let response = client
+        .get(url)
+        .header(ACCEPT, "application/vnd.github+json")
+        .header(USER_AGENT, user_agent_value())
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|err| format!("network error: {err}"))?;
+    let rate = RateSnapshot::from_headers(response.headers());
+    let status = response.status().as_u16();
+    let body = response.text().unwrap_or_default();
+    Ok((status, rate, body))
+}
+
+fn asset_from_gh(asset: GhAsset) -> Asset {
+    Asset {
+        name: asset.name,
+        url: asset.browser_download_url,
+        size: asset.size,
+        digest: asset.digest,
+    }
+}
+
+fn listed_from_gh(release: GhListedRelease) -> ListedRelease {
+    ListedRelease {
+        tag: release.tag_name,
+        html_url: release.html_url,
+        draft: release.draft,
+        prerelease: release.prerelease,
+        assets: release.assets.into_iter().map(asset_from_gh).collect(),
+    }
 }
 
 pub fn banner_message(
@@ -381,20 +487,29 @@ pub fn select_asset(
 }
 
 fn finish_selection(asset: &Asset, kind: PackageKind, assets: &[Asset]) -> SelectedAsset {
-    let mut selected = SelectedAsset {
+    let checksum_asset = checksum_asset_for(&asset.name, asset.digest.as_deref(), assets);
+    SelectedAsset {
         name: asset.name.clone(),
         url: asset.url.clone(),
         size: asset.size,
         kind,
         digest: asset.digest.clone(),
-        checksum_asset: None,
-    };
-    if parse_digest(selected.digest.as_deref()).is_some() {
-        return selected;
+        checksum_asset,
+    }
+}
+
+/// Digest field, sidecar, or `SHA256SUMS` list for `asset_name`, if one was published.
+pub fn checksum_asset_for(
+    asset_name: &str,
+    digest: Option<&str>,
+    assets: &[Asset],
+) -> Option<ChecksumAsset> {
+    if parse_digest(digest).is_some() {
+        return None;
     }
     let sidecar_names = [
-        format!("{}.sha256", selected.name),
-        format!("{}.sha256sum", selected.name),
+        format!("{asset_name}.sha256"),
+        format!("{asset_name}.sha256sum"),
     ];
     if let Some(sidecar) = assets.iter().find(|candidate| {
         sidecar_names
@@ -402,23 +517,22 @@ fn finish_selection(asset: &Asset, kind: PackageKind, assets: &[Asset]) -> Selec
             .any(|name| name.eq_ignore_ascii_case(&candidate.name))
             && is_allowed_download_host_url(&candidate.url)
     }) {
-        selected.checksum_asset = Some(ChecksumAsset {
+        return Some(ChecksumAsset {
             name: sidecar.name.clone(),
             url: sidecar.url.clone(),
             role: ChecksumRole::Sidecar,
         });
-        return selected;
     }
-    if let Some(sums) = assets.iter().find(|candidate| {
-        is_sums_filename(&candidate.name) && is_allowed_download_host_url(&candidate.url)
-    }) {
-        selected.checksum_asset = Some(ChecksumAsset {
+    assets
+        .iter()
+        .find(|candidate| {
+            is_sums_filename(&candidate.name) && is_allowed_download_host_url(&candidate.url)
+        })
+        .map(|sums| ChecksumAsset {
             name: sums.name.clone(),
             url: sums.url.clone(),
             role: ChecksumRole::SumsList,
-        });
-    }
-    selected
+        })
 }
 
 pub fn is_allowed_download_host_url(url: &str) -> bool {
@@ -678,6 +792,44 @@ mod tests {
         ));
         assert!(!is_allowed_download_host("example.com"));
         assert!(!is_allowed_download_host_url("http://github.com/a"));
+    }
+
+    #[test]
+    fn release_list_keeps_prereleases() {
+        let body = r#"[
+            {
+                "tag_name": "v0.1.2-alpha",
+                "html_url": "https://github.com/Straconis/nexus-launcher/releases/tag/v0.1.2-alpha",
+                "draft": false,
+                "prerelease": true,
+                "assets": [{
+                    "name": "nexus-launcher-linux-x86_64.tar.gz",
+                    "browser_download_url": "https://github.com/Straconis/nexus-launcher/releases/download/v0.1.2-alpha/nexus-launcher-linux-x86_64.tar.gz",
+                    "size": 8,
+                    "digest": null
+                }]
+            },
+            {
+                "tag_name": "v0.1.0",
+                "html_url": "https://github.com/Straconis/nexus-launcher/releases/tag/v0.1.0",
+                "draft": false,
+                "prerelease": false,
+                "assets": []
+            }
+        ]"#;
+        match interpret_release_list(200, Some(50), body) {
+            ListOutcome::Releases(releases) => {
+                assert_eq!(releases.len(), 2);
+                assert!(releases[0].prerelease);
+                assert_eq!(releases[0].tag, "v0.1.2-alpha");
+                assert!(!releases[1].prerelease);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(matches!(
+            interpret_release_list(404, Some(10), "{\"message\":\"Not Found\"}"),
+            ListOutcome::Missing
+        ));
     }
 
     #[test]

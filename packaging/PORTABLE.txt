@@ -38,3 +38,9 @@ Central administration
 Window appearance
   The window opens maximized. Use Preferences in the account toolbar to
   compare charcoal header/footer colors with the original dark appearance.
+
+The LAUNCHER strip can download a newer Nexus Launcher release and replace
+this executable. It does not replace catalog/apps.toml or tools you already
+installed. The published v0.1.0-alpha and v0.3.0-alpha downloads do not include that strip. If you are running one
+of those files, install the first updater-enabled release by hand.
+After that, the window can update itself.

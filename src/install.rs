@@ -190,17 +190,23 @@ where
 
     let archive_path = incoming.join(safe_name);
     progress("Downloading", Some(0.05));
-    download_file(client, &request.url, &archive_path, |got, total| {
-        let fraction = if total == 0 {
-            0.4
-        } else {
-            0.05 + 0.75 * (got as f32 / total as f32)
-        };
-        progress(
-            &format!("Downloading {}", format_bytes(got)),
-            Some(fraction.min(0.85)),
-        );
-    })?;
+    download_file(
+        client,
+        &request.url,
+        &archive_path,
+        u64::MAX,
+        |got, total| {
+            let fraction = if total == 0 {
+                0.4
+            } else {
+                0.05 + 0.75 * (got as f32 / total as f32)
+            };
+            progress(
+                &format!("Downloading {}", format_bytes(got)),
+                Some(fraction.min(0.85)),
+            );
+        },
+    )?;
     if let Some(expected) = &sha {
         progress("Verifying SHA-256", Some(0.88));
         verify_sha256(&archive_path, expected)?;
@@ -393,7 +399,7 @@ where
         .ok_or_else(|| InstallError::ChecksumMissingEntry(asset_name.to_string()))
 }
 
-fn download_limited(
+pub(crate) fn download_limited(
     client: &reqwest::blocking::Client,
     url: &str,
     limit: usize,
@@ -413,10 +419,11 @@ fn download_limited(
     String::from_utf8(buf).map_err(|_| InstallError::ChecksumFormat)
 }
 
-fn download_file<F>(
+pub(crate) fn download_file<F>(
     client: &reqwest::blocking::Client,
     url: &str,
     dest: &Path,
+    max_bytes: u64,
     mut progress: F,
 ) -> Result<(), InstallError>
 where
@@ -430,6 +437,11 @@ where
         )));
     }
     let total = response.content_length().unwrap_or(0);
+    if total > max_bytes {
+        return Err(InstallError::Message(format!(
+            "download is larger than {max_bytes} bytes"
+        )));
+    }
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -444,6 +456,13 @@ where
         }
         file.write_all(&buf[..read])?;
         got += read as u64;
+        if got > max_bytes {
+            drop(file);
+            let _ = fs::remove_file(&temporary);
+            return Err(InstallError::Message(format!(
+                "download is larger than {max_bytes} bytes"
+            )));
+        }
         progress(got, total);
     }
     file.sync_all()?;
@@ -454,7 +473,7 @@ where
     Ok(())
 }
 
-fn verify_sha256(path: &Path, expected: &str) -> Result<(), InstallError> {
+pub(crate) fn verify_sha256(path: &Path, expected: &str) -> Result<(), InstallError> {
     let got = checksum::sha256_file(path)?;
     if got.eq_ignore_ascii_case(expected.trim()) {
         Ok(())
@@ -467,7 +486,7 @@ fn verify_sha256(path: &Path, expected: &str) -> Result<(), InstallError> {
     }
 }
 
-pub fn extract_archive(archive: &Path, dest: &Path) -> Result<(), InstallError> {
+pub(crate) fn extract_archive(archive: &Path, dest: &Path) -> Result<(), InstallError> {
     if dest.exists() {
         fs::remove_dir_all(dest)?;
     }
