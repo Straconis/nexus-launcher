@@ -32,7 +32,7 @@ Portable archives can be extracted anywhere writable; run the included executabl
 
 The launcher works from its local catalog without a broker. Central administration needs a separately running broker and a reachable `server_url` in the user's `central.toml`; the installer does not bundle server credentials or point to the developer's local VM. See [Central catalog](#central-catalog). macOS binaries are not included.
 
-The source version is **0.5.3-alpha**; consult the Releases page for published artifacts. Launcher self-update is integrated in this branch. Individual managed-app updates are available through **REFRESH** and **UPDATE**.
+The source version is **0.5.4-alpha**; consult the Releases page for published artifacts. Launcher self-update is integrated in this branch. Individual managed-app updates are available through **REFRESH** and **UPDATE**.
 
 ## Website tabs
 
