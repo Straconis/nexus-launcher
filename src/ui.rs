@@ -2105,7 +2105,7 @@ impl NexusApp {
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(label);
             response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Hyperlink, true, label)
+                egui::WidgetInfo::labeled(egui::WidgetType::Link, ui.is_enabled(), label)
             });
             if response.clicked() {
                 ui.ctx()
