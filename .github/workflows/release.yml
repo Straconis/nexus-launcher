@@ -127,11 +127,15 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Package Nexus WordPress service
+        run: |
+          (cd wordpress && zip -qr ../artifacts/nexus-service-0.2.0.zip nexus-service)
+
       - name: SHA256SUMS.txt
         run: |
           cd artifacts
           ls -l
-          sha256sum nexus-launcher-linux-x86_64.tar.gz nexus-launcher-windows-x86_64.zip nexus-launcher-setup-*-windows-x86_64.exe | tee SHA256SUMS.txt
+          sha256sum nexus-launcher-linux-x86_64.tar.gz nexus-launcher-windows-x86_64.zip nexus-launcher-setup-*-windows-x86_64.exe nexus-service-0.2.0.zip | tee SHA256SUMS.txt
 
       - name: Release notes
         run: |
@@ -165,6 +169,7 @@ jobs:
             artifacts/nexus-launcher-linux-x86_64.tar.gz
             artifacts/nexus-launcher-windows-x86_64.zip
             artifacts/nexus-launcher-setup-*-windows-x86_64.exe
+            artifacts/nexus-service-0.2.0.zip
             artifacts/SHA256SUMS.txt
           )
           if gh release view "$tag" >/dev/null 2>&1; then
