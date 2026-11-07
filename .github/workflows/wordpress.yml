@@ -1,0 +1,45 @@
+name: wordpress-service
+on:
+  push:
+    paths: ['wordpress/**', '.github/workflows/wordpress.yml']
+  pull_request:
+    paths: ['wordpress/**', '.github/workflows/wordpress.yml']
+jobs:
+  integration:
+    runs-on: ubuntu-22.04
+    services:
+      database:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: nexus-test-pass
+          MARIADB_DATABASE: nexus_wp_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PHP and WordPress test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y php8.1-cli php8.1-mysql php8.1-mbstring php8.1-xml php8.1-curl
+          curl --fail --silent --show-error --location https://wordpress.org/wordpress-6.8.3.tar.gz | tar -xz -C "$RUNNER_TEMP"
+          cp -R wordpress/nexus-service "$RUNNER_TEMP/wordpress/wp-content/plugins/"
+          find wordpress -name '*.php' -print0 | xargs -0 -n1 php8.1 -l
+      - name: Install disposable site and test API
+        env:
+          NEXUS_TEST_ALLOW_WRITE: 'yes'
+        run: |
+          export NEXUS_TEST_WP_ROOT="$RUNNER_TEMP/wordpress"
+          export NEXUS_TEST_WP_LOAD="$RUNNER_TEMP/wordpress/wp-load.php"
+          php8.1 wordpress/tests/install.php
+          php8.1 wordpress/tests/integration.php
+      - name: Package installable plugin and Hostinger bridge
+        run: |
+          mkdir -p dist
+          (cd wordpress && zip -qr ../dist/nexus-service-0.1.0.zip nexus-service)
+          (cd wordpress/hostinger-bridge && zip -qr ../../dist/nexus-hostinger-bridge-0.1.0.zip index.php .htaccess)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexus-wordpress-service
+          path: dist/*.zip
