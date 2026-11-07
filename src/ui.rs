@@ -1180,7 +1180,7 @@ impl NexusApp {
                         ui.set_min_height(328.0);
                         if let Some(category) = &card.entry.category {
                             ui.label(
-                                RichText::new(category.replace(" / ", " › ").to_uppercase())
+                                RichText::new(category.to_uppercase())
                                     .family(theme::orbitron())
                                     .size(11.0)
                                     .color(ACCENT),
