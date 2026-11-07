@@ -2105,6 +2105,24 @@ impl NexusApp {
     }
 
     fn footer(&self, ui: &mut egui::Ui) {
+        if ui.available_width() >= 850.0 {
+            ui.columns(3, |columns| {
+                self.footer_links(&mut columns[0]);
+                self.support.show(&mut columns[1]);
+                columns[2].with_layout(egui::Layout::top_down(egui::Align::RIGHT), |ui| {
+                    self.footer_status(ui);
+                });
+            });
+        } else {
+            self.footer_links(ui);
+            ui.add_space(6.0);
+            self.support.show(ui);
+            ui.add_space(6.0);
+            self.footer_status(ui);
+        }
+    }
+
+    fn footer_links(&self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             brand_link(
                 ui,
@@ -2137,9 +2155,10 @@ impl NexusApp {
                 ui.ctx()
                     .open_url(egui::OpenUrl::new_tab("https://discord.gg/n68NmABjjW"));
             }
-            ui.vertical(|ui| self.support.show(ui));
         });
-        ui.add_space(4.0);
+    }
+
+    fn footer_status(&self, ui: &mut egui::Ui) {
         let root = match &self.data_root {
             Ok(path) => path.display().to_string(),
             Err(err) => err.clone(),

@@ -29,7 +29,7 @@ impl SiteTab {
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::Updates => "LATEST POST",
-            Self::Request => "REQUEST A PROJECT",
+            Self::Request => "CONTACT / PROJECT REQUEST",
             Self::Library => "LANGUAGE LIBRARY",
         }
     }

@@ -32,11 +32,11 @@ Portable archives can be extracted anywhere writable; run the included executabl
 
 The launcher works from its local catalog without a broker. Central administration needs a separately running broker and a reachable `server_url` in the user's `central.toml`; the installer does not bundle server credentials or point to the developer's local VM. See [Central catalog](#central-catalog). macOS binaries are not included.
 
-The source version is **0.5.2-alpha**; consult the Releases page for published artifacts. Launcher self-update is integrated in this branch. Individual managed-app updates are available through **REFRESH** and **UPDATE**.
+The source version is **0.5.3-alpha**; consult the Releases page for published artifacts. Launcher self-update is integrated in this branch. Individual managed-app updates are available through **REFRESH** and **UPDATE**.
 
 ## Website tabs
 
-**Latest Post** shows the newest public WordPress post. **Request a Project** switches between a project request and a general contact form, both protected by Cloudflare Turnstile. **Language Library** runs in the launcher and is available offline. **Straconis.dev** opens the full website in your default browser. The native form and latest post use Project Nexus 1.20.0 on the website. The footer mirrors the site’s confirmed Ko-fi tips.
+**Latest Post** shows the newest public WordPress post. **Contact / Project Request** switches between a project request and a general contact form, both protected by Cloudflare Turnstile. **Language Library** runs in the launcher and is available offline. **Straconis.dev** opens the full website in your default browser. The native form and latest post use Project Nexus 1.20.0 on the website. The footer mirrors the site’s confirmed Ko-fi tips.
 
 The Cloudflare spam check uses Microsoft Edge WebView2 on Windows and WebKitGTK 4.1 on Linux. On Debian and Ubuntu, install the Linux runtime with `sudo apt install libwebkit2gtk-4.1-0`. The spam check on Linux requires X11 or XWayland.
 
