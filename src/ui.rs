@@ -19,8 +19,11 @@ use nexus_protocol::{CatalogApp, ReleaseMeta, Visibility};
 
 #[path = "central_panel.rs"]
 mod central_panel;
+#[path = "site_tabs.rs"]
+mod site_tabs;
 #[path = "tile_banners.rs"]
 mod tile_banners;
+use site_tabs::{SiteTab, SiteTabs};
 
 pub fn run(catalog_path: PathBuf) -> eframe::Result {
     let preferences = crate::preferences::load().unwrap_or_default();
@@ -36,6 +39,13 @@ pub fn run(catalog_path: PathBuf) -> eframe::Result {
         rgba: icon.into_raw(),
     };
     let options = eframe::NativeOptions {
+        #[cfg(target_os = "linux")]
+        event_loop_builder: Some(Box::new(|builder| {
+            use winit::platform::x11::EventLoopBuilderExtX11;
+            if std::env::var_os("DISPLAY").is_some() {
+                builder.with_x11();
+            }
+        })),
         viewport: egui::ViewportBuilder::default()
             .with_icon(icon)
             .with_inner_size([1440.0, 900.0])
@@ -56,6 +66,10 @@ pub fn run(catalog_path: PathBuf) -> eframe::Result {
 struct NexusApp {
     catalog_path: PathBuf,
     show_supported: bool,
+    site_tab: Option<SiteTab>,
+    site_tabs: SiteTabs,
+    #[cfg(target_os = "windows")]
+    next_installer_check: Option<std::time::Instant>,
     contrast_frame: bool,
     preferences_open: bool,
     server_address: String,
@@ -303,6 +317,7 @@ enum CentralEvent {
 enum UiAction {
     Preferences,
     ShowPage(bool),
+    ShowSite(SiteTab),
     Refresh,
     Retry(String),
     Install { id: String, confirmed: bool },
@@ -343,6 +358,10 @@ impl NexusApp {
         let mut app = Self {
             catalog_path,
             show_supported: false,
+            site_tab: None,
+            site_tabs: SiteTabs::default(),
+            #[cfg(target_os = "windows")]
+            next_installer_check: None,
             contrast_frame: preferences.charcoal_frame,
             preferences_open: false,
             server_address: central::config_path()
@@ -469,6 +488,44 @@ impl NexusApp {
             self.apply(event);
         }
         self.refresh_status();
+    }
+
+    #[cfg(target_os = "windows")]
+    fn poll_external_installer(&mut self, ctx: &egui::Context) {
+        let Ok(root) = &self.data_root else { return };
+        let Some(card) = self
+            .cards
+            .iter_mut()
+            .find(|card| card.entry.id == "stat-tracker")
+        else {
+            return;
+        };
+        let Phase::Live(live) = &mut card.phase else {
+            return;
+        };
+        let record = match &live.install {
+            InstallState::InstallerStaged(record)
+            | InstallState::Ready(record)
+            | InstallState::Broken { record, .. }
+                if record.kind == PackageKind::Handoff =>
+            {
+                record
+            }
+            _ => return,
+        };
+        if !record
+            .asset_name
+            .to_ascii_lowercase()
+            .starts_with("stattrackersetup-")
+        {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self.next_installer_check.is_none_or(|next| next <= now) && live.busy.is_none() {
+            live.install = install::detect(root, &card.entry.id);
+            self.next_installer_check = Some(now + Duration::from_secs(2));
+        }
+        ctx.request_repaint_after(Duration::from_secs(2));
     }
 
     fn apply(&mut self, event: Event) {
@@ -660,7 +717,11 @@ impl NexusApp {
     fn handle(&mut self, action: UiAction) {
         match action {
             UiAction::Preferences => self.preferences_open = true,
-            UiAction::ShowPage(supported) => self.show_supported = supported,
+            UiAction::ShowPage(supported) => {
+                self.site_tab = None;
+                self.show_supported = supported;
+            }
+            UiAction::ShowSite(tab) => self.site_tab = Some(tab),
             UiAction::Refresh => self.reload(),
             UiAction::Retry(id) => self.retry(&id),
             UiAction::Install { id, confirmed } => self.begin_install(&id, confirmed),
@@ -904,8 +965,11 @@ impl Card {
 }
 
 impl eframe::App for NexusApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.site_tabs.pump(ctx);
         self.poll();
+        #[cfg(target_os = "windows")]
+        self.poll_external_installer(ctx);
         self.tile_banners.update(
             ctx,
             self.cards.iter().filter_map(|card| {
@@ -918,7 +982,8 @@ impl eframe::App for NexusApp {
                         (card.entry.kind == "supported" && card.entry.id == "s3d-labs")
                             .then_some(tile_banners::S3D_BANNER_URL)
                     })?;
-                let visible = (card.entry.kind == "supported") == self.show_supported;
+                let visible = self.site_tab.is_none()
+                    && (card.entry.kind == "supported") == self.show_supported;
                 Some((url, visible))
             }),
         );
@@ -938,15 +1003,27 @@ impl eframe::App for NexusApp {
             .show(ctx, |ui| {
                 ui.add_enabled_ui(!modal_open, |ui| {
                     actions.extend(self.header(ui));
-                    ui.horizontal(|ui| {
-                        if ui.selectable_label(!self.show_supported, "TOOLS").clicked() {
-                            actions.push(UiAction::ShowPage(false));
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, supported) in [("TOOLS", false), ("SUPPORTED PROJECTS", true)] {
+                            if ui
+                                .selectable_label(
+                                    self.site_tab.is_none() && self.show_supported == supported,
+                                    label,
+                                )
+                                .clicked()
+                            {
+                                actions.push(UiAction::ShowPage(supported));
+                                ctx.request_repaint();
+                            }
                         }
-                        if ui
-                            .selectable_label(self.show_supported, "SUPPORTED PROJECTS")
-                            .clicked()
-                        {
-                            actions.push(UiAction::ShowPage(true));
+                        for tab in SiteTab::ALL {
+                            if ui
+                                .selectable_label(self.site_tab == Some(tab), tab.label())
+                                .clicked()
+                            {
+                                actions.push(UiAction::ShowSite(tab));
+                                ctx.request_repaint();
+                            }
                         }
                     });
                 });
@@ -975,7 +1052,16 @@ impl eframe::App for NexusApp {
                     actions.extend(self.central_actions(ui));
                     actions.extend(self.launcher_strip(ui));
                     actions.extend(self.banners(ui));
-                    actions.extend(self.grid(ui));
+                    if let Some(tab) = self.site_tab {
+                        if modal_open || self.preferences_open || self.central.has_open_window() {
+                            self.site_tabs.hide();
+                        } else {
+                            self.site_tabs.show(ui, frame, tab);
+                        }
+                    } else {
+                        self.site_tabs.hide();
+                        actions.extend(self.grid(ui));
+                    }
                 });
             });
         if self.preferences_open {
@@ -2765,6 +2851,10 @@ mod tests {
         NexusApp {
             catalog_path: PathBuf::from("catalog/apps.toml"),
             show_supported: false,
+            site_tab: None,
+            site_tabs: SiteTabs::default(),
+            #[cfg(target_os = "windows")]
+            next_installer_check: None,
             contrast_frame: true,
             preferences_open: false,
             server_address: central::config_path()

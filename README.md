@@ -19,9 +19,9 @@ cargo test
 
 ## Downloads
 
-Tagged releases publish binaries on [GitHub Releases](https://github.com/Straconis/nexus-launcher/releases). The 0.4.0-alpha packaging includes:
+Tagged releases publish binaries on [GitHub Releases](https://github.com/Straconis/nexus-launcher/releases). Launcher packages include:
 
-- `nexus-launcher-setup-0.4.0-alpha-windows-x86_64.exe` — Windows per-user installer
+- `nexus-launcher-setup-<version>-windows-x86_64.exe` — Windows per-user installer
 - `nexus-launcher-windows-x86_64.zip` — Windows portable build
 - `nexus-launcher-linux-x86_64.tar.gz` — Linux binary and seed catalog
 - `SHA256SUMS.txt`
@@ -32,7 +32,15 @@ Portable archives can be extracted anywhere writable; run the included executabl
 
 The launcher works from its local catalog without a broker. Central administration needs a separately running broker and a reachable `server_url` in the user's `central.toml`; the installer does not bundle server credentials or point to the developer's local VM. See [Central catalog](#central-catalog). macOS binaries are not included.
 
-The source version is **0.4.0-alpha**; consult the Releases page for published artifacts. Launcher self-update is integrated in this branch. Individual managed-app updates are available through **REFRESH** and **UPDATE**.
+The source version is **0.5.0-alpha**; consult the Releases page for published artifacts. Launcher self-update is integrated in this branch. Individual managed-app updates are available through **REFRESH** and **UPDATE**.
+
+## Website tabs
+
+**Latest Updates** shows the newest public WordPress post. **Request a Project** uses the site’s form and Cloudflare check. **Language Library** and **Straconis.dev** bring the rest of the public site into the launcher. The request and latest post views require Project Nexus 1.18.0 on the website.
+
+Embedded pages use Microsoft Edge WebView2 on Windows and WebKitGTK 4.1 on Linux. On Debian and Ubuntu, install the Linux runtime with `sudo apt install libwebkit2gtk-4.1-0`. Embedded pages on Linux require X11 or XWayland. Each tab also has an **Open in browser** button.
+
+On Windows, Stat Tracker’s card detects the installed copy after the setup program has finished. It reads the actual installation path registered by the installer, including custom folders.
 
 ## Central catalog
 
@@ -149,7 +157,7 @@ Rust **1.99.1** is pinned in `rust-toolchain.toml`. [rustup](https://rustup.rs/)
 Linux packages used to compile and link eframe (glow / winit):
 
 ```bash
-sudo apt-get install -y pkg-config libssl-dev libgtk-3-dev \
+sudo apt-get install -y pkg-config libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
   libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev \
   libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
   libxkbcommon-dev libxkbcommon-x11-dev libgl1-mesa-dev

@@ -3,7 +3,7 @@ resolver = "2"
 members = [".", "crates/nexus-protocol", "crates/nexus-server"]
 
 [workspace.package]
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Straconis"]
@@ -25,7 +25,7 @@ categories = ["gui"]
 
 [features]
 default = ["gui"]
-gui = ["dep:eframe", "dep:image"]
+gui = ["dep:eframe", "dep:image", "dep:wry", "dep:gtk", "dep:winit", "dep:raw-window-handle"]
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -45,12 +45,17 @@ thiserror = "1"
 toml = "0.8"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 nexus-protocol = { path = "crates/nexus-protocol" }
+raw-window-handle = { version = "0.6", optional = true }
+wry = { version = "0.57.1", optional = true }
 # Select real OS credential stores; keyring without a platform feature uses a mock store.
 [target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.18", optional = true }
+winit = { version = "0.30", default-features = false, features = ["x11"], optional = true }
 keyring = { version = "3", features = ["linux-native"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+windows-sys = { version = "0.61", features = ["Win32_System_Registry"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

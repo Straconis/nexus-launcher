@@ -78,6 +78,15 @@ pub struct CentralPanel {
 }
 
 impl CentralPanel {
+    pub fn has_open_window(&self) -> bool {
+        self.admin_open
+            || self.help_open
+            || self.editor_open
+            || self.status_open
+            || self.project_type_open
+            || self.category_open
+    }
+
     pub fn new(server_url: Option<String>) -> Self {
         Self {
             server_url,

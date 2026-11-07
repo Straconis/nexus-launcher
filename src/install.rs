@@ -105,6 +105,10 @@ pub fn detect(root: &Path, app_id: &str) -> InstallState {
     let Ok(record) = serde_json::from_str::<InstallRecord>(&text) else {
         return InstallState::NotInstalled;
     };
+    #[cfg(target_os = "windows")]
+    if let Some(installed) = stat_tracker_install(app_id, &record) {
+        return InstallState::Ready(installed);
+    }
     match record.kind {
         PackageKind::Handoff => match &record.installer_path {
             Some(installer) if installer.is_file() => InstallState::InstallerStaged(record),
@@ -125,6 +129,62 @@ pub fn detect(root: &Path, app_id: &str) -> InstallState {
             },
         },
     }
+}
+
+#[cfg(target_os = "windows")]
+fn stat_tracker_install(app_id: &str, record: &InstallRecord) -> Option<InstallRecord> {
+    // This installer registers its actual installation directory, including custom paths.
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Registry::{
+        RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6464KEY,
+    };
+
+    if app_id != "stat-tracker"
+        || record.app_id != app_id
+        || record.kind != PackageKind::Handoff
+        || !record
+            .asset_name
+            .to_ascii_lowercase()
+            .starts_with("stattrackersetup-")
+    {
+        return None;
+    }
+
+    fn registry_string(name: &str) -> Option<std::ffi::OsString> {
+        let key: Vec<u16> = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{C7BFF5B7-6991-4E88-BFB5-1FF55D64D680}_is1"
+            .encode_utf16().chain(Some(0)).collect();
+        let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+        let mut value = vec![0u16; 32768];
+        let mut bytes = (value.len() * std::mem::size_of::<u16>()) as u32;
+        // The buffer is writable for bytes bytes and the key/name are NUL terminated.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                key.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
+                std::ptr::null_mut(),
+                value.as_mut_ptr().cast(),
+                &mut bytes,
+            )
+        };
+        if status != 0 {
+            return None;
+        }
+        let end = value.iter().position(|unit| *unit == 0)?;
+        (end != 0).then(|| std::ffi::OsString::from_wide(&value[..end]))
+    }
+
+    let directory = PathBuf::from(registry_string("InstallLocation")?);
+    let executable = directory.join("StatTracker.exe");
+    if !directory.is_absolute() || !executable.is_file() {
+        return None;
+    }
+    let version = registry_string("DisplayVersion")?.into_string().ok()?;
+    let mut installed = record.clone();
+    installed.launch_path = Some(executable);
+    installed.version = version;
+    Some(installed)
 }
 
 pub fn install_package<F>(
@@ -341,7 +401,14 @@ where
     if let Some(path) = &installer_path {
         hand_to_os(path).map_err(|err| InstallError::Handoff(err.to_string()))?;
     }
-    progress("Installed", Some(1.0));
+    progress(
+        if kind == PackageKind::Handoff {
+            "Opened installer"
+        } else {
+            "Installed"
+        },
+        Some(1.0),
+    );
     Ok(record)
 }
 
@@ -921,6 +988,37 @@ mod tests {
             InstallState::InstallerStaged(_)
         ));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "requires the published Stat Tracker Windows installer fixture"]
+    fn detects_stat_tracker_after_windows_setup() {
+        let expected_dir = PathBuf::from(std::env::var_os("NEXUS_TEST_STAT_TRACKER_DIR").unwrap());
+        let root = expected_dir.parent().unwrap().join("launcher-records");
+        let app_dir = root.join("apps").join("stat-tracker");
+        fs::create_dir_all(&app_dir).unwrap();
+        let record = InstallRecord {
+            schema: RECORD_SCHEMA,
+            app_id: "stat-tracker".into(),
+            version: "v1.0.0".into(),
+            asset_name: "StatTrackerSetup-1.0.0.exe".into(),
+            sha256: None,
+            kind: PackageKind::Handoff,
+            install_dir: app_dir.clone(),
+            launch_path: None,
+            installer_path: None,
+            installed_at: "2026-01-01T00:00:00Z".into(),
+        };
+        write_record(&app_dir.join("install.json"), &record).unwrap();
+        let InstallState::Ready(installed) = detect(&root, "stat-tracker") else {
+            panic!("Windows setup completed, but the launcher did not detect Stat Tracker");
+        };
+        assert_eq!(installed.version, "1.0.0");
+        assert_eq!(
+            installed.launch_path.unwrap(),
+            expected_dir.join("StatTracker.exe")
+        );
     }
 
     #[test]
