@@ -21,13 +21,15 @@ use nexus_protocol::{CatalogApp, ReleaseMeta, Visibility};
 mod central_panel;
 #[path = "language_library.rs"]
 mod language_library;
+#[path = "native_site.rs"]
+mod native_site;
 #[path = "site_tabs.rs"]
 mod site_tabs;
 #[path = "support.rs"]
 mod support;
 #[path = "tile_banners.rs"]
 mod tile_banners;
-use site_tabs::{SiteTab, SiteTabs};
+use site_tabs::{Challenge, SiteTab};
 
 pub fn run(catalog_path: PathBuf) -> eframe::Result {
     let preferences = crate::preferences::load().unwrap_or_default();
@@ -71,7 +73,9 @@ struct NexusApp {
     catalog_path: PathBuf,
     show_supported: bool,
     site_tab: Option<SiteTab>,
-    site_tabs: SiteTabs,
+    challenge: Challenge,
+    contact_form: native_site::ContactForm,
+    latest_post: native_site::LatestPost,
     language_library: language_library::LanguageLibrary,
     support: support::Support,
     #[cfg(target_os = "windows")]
@@ -365,7 +369,9 @@ impl NexusApp {
             catalog_path,
             show_supported: false,
             site_tab: None,
-            site_tabs: SiteTabs::default(),
+            challenge: Challenge::default(),
+            contact_form: Default::default(),
+            latest_post: Default::default(),
             language_library: Default::default(),
             support: Default::default(),
             #[cfg(target_os = "windows")]
@@ -974,7 +980,7 @@ impl Card {
 
 impl eframe::App for NexusApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.site_tabs.pump(ctx);
+        self.challenge.pump(ctx);
         self.support.update(ctx);
         self.poll();
         #[cfg(target_os = "windows")]
@@ -1027,10 +1033,7 @@ impl eframe::App for NexusApp {
                         }
                         for tab in SiteTab::ALL {
                             if ui
-                                .selectable_label(
-                                    self.site_tab.is_some_and(|active| active.group() == tab),
-                                    tab.label(),
-                                )
+                                .selectable_label(self.site_tab == Some(tab), tab.label())
                                 .clicked()
                             {
                                 actions.push(UiAction::ShowSite(tab));
@@ -1066,27 +1069,23 @@ impl eframe::App for NexusApp {
                     actions.extend(self.launcher_strip(ui));
                     actions.extend(self.banners(ui));
                     if let Some(tab) = self.site_tab {
-                        if modal_open || self.preferences_open || self.central.has_open_window() {
-                            self.site_tabs.hide();
-                        } else if tab == SiteTab::Library {
-                            self.site_tabs.hide();
-                            self.language_library.show(ui);
-                        } else {
-                            if matches!(tab, SiteTab::Request | SiteTab::Contact) {
-                                ui.horizontal(|ui| {
-                                    for mode in [SiteTab::Request, SiteTab::Contact] {
-                                        if ui.selectable_label(tab == mode, mode.label()).clicked()
-                                        {
-                                            actions.push(UiAction::ShowSite(mode));
-                                            ctx.request_repaint();
-                                        }
-                                    }
-                                });
+                        let show_challenge = tab == SiteTab::Request
+                            && !modal_open
+                            && !self.preferences_open
+                            && !self.central.has_open_window();
+                        if !show_challenge {
+                            self.challenge.hide();
+                        }
+                        match tab {
+                            SiteTab::Updates => self.latest_post.show(ui),
+                            SiteTab::Library => self.language_library.show(ui),
+                            SiteTab::Request if show_challenge => {
+                                self.contact_form.show(ui, frame, &mut self.challenge);
                             }
-                            self.site_tabs.show(ui, frame, tab);
+                            SiteTab::Request => {}
                         }
                     } else {
-                        self.site_tabs.hide();
+                        self.challenge.hide();
                         actions.extend(self.grid(ui));
                     }
                 });
@@ -2904,7 +2903,9 @@ mod tests {
             catalog_path: PathBuf::from("catalog/apps.toml"),
             show_supported: false,
             site_tab: None,
-            site_tabs: SiteTabs::default(),
+            challenge: Challenge::default(),
+            contact_form: Default::default(),
+            latest_post: Default::default(),
             language_library: Default::default(),
             support: Default::default(),
             #[cfg(target_os = "windows")]
